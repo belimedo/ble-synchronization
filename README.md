@@ -50,3 +50,7 @@ Pinout: https://mischianti.org/esp32-nodemcu-32s-esp-32s-kit-high-resolution-pin
 BLE protokol: 
 
 IDE: https://www.arduino.cc/en/software
+
+Instalacije IDE-a: https://randomnerdtutorials.com/installing-esp32-arduino-ide-2-0/
+
+
