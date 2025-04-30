@@ -3,6 +3,7 @@
 #include <BLEServer.h>
 #include <BLE2902.h>
 #include <BLE2901.h>
+#include <esp_bt.h>  // Add at top
 #include "esp_timer.h"
 #include "freertos/semphr.h"  // For semaphore
 #include "logged_data.h"
@@ -18,10 +19,10 @@
 #define RX_RED_PIN          (2)
 #define RX_BLUE_PIN         (22)
 #define RX_GREEN_PIN        (3)
-#define TX_RED_PIN          (34)
+#define TX_RED_PIN          (12)
 #define TX_BLUE_PIN         (32)
 #define TX_GREEN_PIN        (25)
-#define SEMAPHORE_PIN       (36)
+#define SEMAPHORE_PIN       (27)
 
 int RXpinLayout[NUMBER_OF_BUFFERS] = {RX_RED_PIN, RX_GREEN_PIN, RX_BLUE_PIN};
 int TXpinLayout[NUMBER_OF_BUFFERS] = {TX_RED_PIN, TX_GREEN_PIN, TX_BLUE_PIN};
@@ -40,7 +41,6 @@ uint32_t sampleCounter = 0;
 uint32_t bufferSampleCounter = 0;
 uint64_t lastTimestampSent = 0;
 int activeRXPin = RXpinLayout[currentBufferIdx];
-int activeTXPin = TXpinLayout[currentBufferIdx];
 
 // Transfer Control
 bool waitForAck = false;
@@ -97,13 +97,29 @@ void sendTimestamp(void* arg) {
     }
 }
 
+class ServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+        deviceConnected = true;
+        Serial.println("Client connected");
+        Serial.println("Buffer size:");
+        Serial.println(TRUE_BUFFER_SIZE);
+        // Restart timestamp notifications on reconnect
+        esp_timer_start_periodic(timestampTimer, 60 * 1000000);
+    }
+    void onDisconnect(BLEServer* pServer) {
+        deviceConnected = false;
+        Serial.println("Client disconnected");
+        esp_timer_stop(timestampTimer);
+    }
+};
+
 // Enhanced Control Callback with LED feedback
 class ControlCallback: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pChar) {
         String value = pChar->getValue().c_str();
         Serial.println("Control command: " + value);
         
-        if (value == "REQUEST") {
+        if (value == "REQ") {
             if (!waitForAck) {
                 transferBufferIdx = (currentBufferIdx == 0) ? NUMBER_OF_BUFFERS - 1 : currentBufferIdx - 1;
                 transferOffset = 0;
@@ -166,18 +182,47 @@ void setup_pins() {
 
 void setup() {
     Serial.begin(115200);
+    esp_core_dump_init();
+    Serial.printf("Initial Heap: %d\n", ESP.getFreeHeap());
+
+    // Release unused BT memory
+    esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+    
+    // Initialize controller
+    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+    if (esp_bt_controller_init(&bt_cfg) != ESP_OK) {
+        Serial.println("BT Controller init failed");
+        ESP.restart();
+    }
+
+    // Enable BLE mode
+    if (esp_bt_controller_enable(ESP_BT_MODE_BLE) != ESP_OK) {
+        Serial.println("BT enable failed");
+        ESP.restart();
+    }
+
+    // Initialize bluedroid
+    if (esp_bluedroid_init() != ESP_OK || 
+        esp_bluedroid_enable() != ESP_OK) {
+        Serial.println("Bluedroid init failed");
+        ESP.restart();
+    }
+
+    // Finally init BLE
+    BLEDevice::init("ESP32_Data_Logger_Semaphore");
+    Serial.printf("Post-BLE Heap: %d\n", ESP.getFreeHeap());
+
     
     // Create semaphore
     bufferSemaphore = xSemaphoreCreateMutex();
     
     // Initialize hardware
     setup_pins();
-    memset(buffers, 0, sizeof(buffers));
     
     // BLE Initialization
-    BLEDevice::init("ESP32_Data_Logger_Semaphore");
+    //BLEDevice::init("ESP32_Data_Logger_Semaphore");
     BLEDevice::setMTU(247);
-    BLEServer* pServer = BLEDevice::createServer();
+    pServer = BLEDevice::createServer();
     pServer->setCallbacks(new ServerCallbacks());
     
     BLEService *pService = pServer->createService(SERVICE_UUID);

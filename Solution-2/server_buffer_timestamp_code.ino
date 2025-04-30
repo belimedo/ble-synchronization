@@ -5,22 +5,14 @@
 #include <BLE2901.h>
 #include "esp_timer.h"
 #include "logged_data.h"
+#include "buffer_structure.h"
 
 #define SAMPLING_FREQUENCY  (10) // Frekvencija samplovanja
 #define MAX_BUFFER_SIZE     (256) // Velicina bafera bez gubitka podataka
 #define TIME_COVERED        (MAX_BUFFER_SIZE / sizeof(uint8_t) / SAMPLING_FREQUENCY) // Vrijeme koje jedan bafer prenosi
 #define TRUE_BUFFER_SIZE    (TIME_COVERED * sizeof(uint8_t) * SAMPLING_FREQUENCY ) // Velicina bafera koja ce se prenositi
 #define NUMBER_OF_BUFFERS   (3) // Trenutni broj, a moglo bi se i izracunati na osnovu vremena koje donosi jedan bafer pa tako kontrolisati i broj bafera kao WANTED_TIME / TIME_COVERED
-#define TIMEOUT_PERIOD      (1.f / SAMPLING_FREQUENCY)
 
-
-typedef struct buffer_structure
-{
-    uint64_t time_stamp;
-    uint8_t buffer_values[TRUE_BUFFER_SIZE];
-} BUFFER;
-
-BUFFER buffers[NUMBER_OF_BUFFERS]; 
 
 // BLE Configuration
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
@@ -32,7 +24,7 @@ BUFFER buffers[NUMBER_OF_BUFFERS];
 const int redPin = 2;
 const int bluePin = 22;
 const int greenPin = 3;
-int pinLayout[NUMBER_OF_BUFFERS] = {redPin, greenPin, bluePin};
+int pinLayout[NUMBER_OF_BUFFERS] = {redPin, bluePin, greenPin};
 
 // BLE Objects
 BLEServer *pServer;
@@ -43,8 +35,6 @@ bool deviceConnected = false;
 uint8_t currentBufferIdx = 0;
 uint32_t sampleCounter = 0;
 uint32_t bufferSampleCounter = 0;
-uint64_t lastSampleTime = 0;
-uint64_t lastTimestampSent = 0;
 int activePin = pinLayout[currentBufferIdx];
 
 // Buffer transfer control
@@ -58,15 +48,13 @@ esp_timer_handle_t sampleTimer;
 esp_timer_handle_t timestampTimer;
 
 // Sampling callback
-void sampleData(void* arg) {
-    uint64_t now = esp_timer_get_time();
-    
+void sampleData(void* arg) {    
     // Get current buffer
     BUFFER* currentBuffer = &buffers[currentBufferIdx];
     
     // Initialize timestamp on first sample
     if (bufferSampleCounter == 0) {
-        currentBuffer->time_stamp = now;
+        currentBuffer->time_stamp = esp_timer_get_time();
     }
     
     // Store data (circular buffer within LOGGED_DATA)
@@ -83,8 +71,6 @@ void sampleData(void* arg) {
         Serial.printf("Switching to buffer: %d\n", currentBufferIdx);
         digitalWrite(activePin, HIGH); // Turn on new LED
     }
-    
-    lastSampleTime = now;
 }
 
 // Timestamp notification callback
@@ -93,7 +79,6 @@ void sendTimestamp(void* arg) {
         uint64_t now = esp_timer_get_time();
         pTimestampChar->setValue((uint8_t *)&now, 8);
         pTimestampChar->notify();
-        lastTimestampSent = now;
         Serial.printf("Timestamp sent: %llu µs\n", now);
     }
 }
@@ -103,14 +88,15 @@ class ServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
         deviceConnected = true;
         Serial.println("Client connected");
-        Serial.println("Buffer size:");
-        Serial.println(TRUE_BUFFER_SIZE);
+        Serial.println("Buffer size:  %llu", TRUE_BUFFER_SIZE);
         // Restart timestamp notifications on reconnect
+        Serial.println("Starting timestamp timer.");
         esp_timer_start_periodic(timestampTimer, 60 * 1000000);
     }
     void onDisconnect(BLEServer* pServer) {
         deviceConnected = false;
         Serial.println("Client disconnected");
+        Serial.println("Stopping timestamp timer.");
         esp_timer_stop(timestampTimer);
     }
 };
@@ -119,10 +105,10 @@ class ServerCallbacks: public BLEServerCallbacks {
 class ControlCallback: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pChar) {
         String value = pChar->getValue().c_str();
-        Serial.println("On write is active");
-        Serial.println(value);
+        Serial.println("Control callback for write characteristic.");
+        Serial.println("String value: %s", value);
         
-        if (value == "REQUEST") {
+        if (value == "REQ") {
             if (!waitForAck) {
                 // Start new transfer with the most recent complete buffer
                 transferBufferIdx = (currentBufferIdx == 0) ? NUMBER_OF_BUFFERS - 1 : currentBufferIdx - 1;
@@ -146,7 +132,7 @@ void sendNextChunk() {
     // Calculate remaining data
     uint16_t remaining = bufferSize - transferOffset;
     if (remaining == 0) {
-        Serial.println("Buffer transfer complete");
+        Serial.println("Buffer transfer complete.");
         return;
     }
 
@@ -216,7 +202,7 @@ void setup() {
     pRxControl->setCallbacks(new ControlCallback());
     // Add description
     BLE2901* pRxDesc = new BLE2901();
-    pRxDesc->setDescription("Control: REQUEST/ACK");
+    pRxDesc->setDescription("Control: REQ/ACK");
     pRxControl->addDescriptor(pRxDesc);
     
     pService->start();
@@ -239,9 +225,9 @@ void setup() {
     // Start timers
     float samplingIntervalUs = (1.f / SAMPLING_FREQUENCY) * 1000000;
     esp_timer_start_periodic(sampleTimer, samplingIntervalUs);
-    Serial.println("Sampling interval:");
+    Serial.println("Starting sampling timer. Sampling interval: %f\n",samplingIntervalUs);
     Serial.println(samplingIntervalUs);
-    esp_timer_start_periodic(timestampTimer, 60 * 1000000); // 60 seconds
+    // esp_timer_start_periodic(timestampTimer, 60 * 1000000); // 60 seconds
     
     Serial.println("BLE Data Logger Ready");
 }
