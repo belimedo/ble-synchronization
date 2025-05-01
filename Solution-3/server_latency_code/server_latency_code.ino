@@ -228,11 +228,13 @@ class ControlCallback: public BLECharacteristicCallbacks {
 
 class ControlCallbacksLatency: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pChar) {
-        std::string value = pChar->getValue();
+        String value = pChar->getValue();
+        Serial.printf("Received value %s with length %d.\n", value, value.length());
 
-        if (startLatencyTest && value.length() == sizeof(uint64_t))
+        if (startLatencyTest && value.length() == sizeof(uint64_t)) // value.length() == sizeof(uint64_t)
         {
-            uint64_t clientSendTime = *((uint64_t*)value.data());
+            uint64_t clientSendTime = *((uint64_t*)value.c_str());
+            //uint64_t clientSendTime = strtoull(value.c_str(), NULL, 10);
             pLatencyControl->setValue((uint8_t*)&clientSendTime, sizeof(clientSendTime));
             pLatencyControl->notify();
             Serial.printf("Received [%d] timestamp: %llu\n", ++latencyCounter, clientSendTime);
@@ -366,13 +368,13 @@ void setup() {
 
     // Latency Control Characteristic (write and notify)
     pLatencyControl = pService->createCharacteristic(
-        CONTROL_UUID,
+        LATENCY_UUID,
         BLECharacteristic::PROPERTY_WRITE | 
         BLECharacteristic::PROPERTY_NOTIFY
     );
     pLatencyControl->setCallbacks(new ControlCallbacksLatency());
     pLatencyControl->addDescriptor(new BLE2902());
-    BLE2901* pTsDesc = new BLE2901();
+    BLE2901* pLatencyDesc = new BLE2901();
     pLatencyDesc->setDescription("Latency control.");
     pLatencyControl->addDescriptor(pLatencyDesc);
     

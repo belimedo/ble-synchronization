@@ -38,11 +38,16 @@ class ClientCallbacks : public BLEClientCallbacks {
     void onDisconnect(BLEClient* pclient) {
         Serial.println("Disconnected from server");
         connected = false;
+        latencyTestComplete = false;
+        avgLatency = 0;
+        startLatencyTest = false;
+        responseReceived = false;
         digitalWrite(connectedPin, LOW);
         // Clean up resources
         BLEDevice::deinit(true); // Full BLE stack reset
         delay(500);
         BLEDevice::init("ESP32_Timesinc_client"); // Reinitialize
+        Serial.println("Reinitializing done.");
     }
 };
 
@@ -126,7 +131,7 @@ bool connectToServer() {
         pLatencyControl->registerForNotify(latencyNotifyCallback);
     }
     
-    Serial.println("Connected and subscribed to timestamp updates");
+    Serial.println("Connected and subscribed to timestamp updates and latency tests.");
     return true;
 }
 
@@ -142,11 +147,11 @@ void performLatencyTest() {
         uint64_t sendTime = esp_timer_get_time();
         pLatencyControl->writeValue((uint8_t*)&sendTime, sizeof(sendTime));
         
-        Serial.println("Waiting for response.");
+        Serial.printf("Send %d timestamp.", i + 1);
         delay(500); // Space out tests. Ovdje treba nekakav notify mehanizam interni a ne ovako
-        
+        Serial.println("Waiting for response.");
         while(!responseReceived) {delay(10);}
-        responseReceived = false
+        responseReceived = false;
     }
     
     avgLatency /= testCount;
@@ -182,6 +187,7 @@ void loop() {
         Serial.println("Attempting reconnection...");
         if (connectToServer()) {
             Serial.println("Reconnected successfully");
+            performLatencyTest();
         }
         delay(5000);
     }
