@@ -10,11 +10,17 @@ static BLEAddress serverAddress(SERVER_MAC);
 // UUIDs (must match server)
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define TIMESTAMP_UUID      "3c95d5e3-d8f7-413a-bf3d-7a2e5d7ab87c"
+#define LATENCY_UUID        "4c95d5e3-d8f7-413a-bf3d-7a2e5d7ab87c" // Notify Write (latency)
 
 // BLE Client objects
 BLEClient* pClient;
 BLERemoteCharacteristic* pTimestampChar;
+BLERemoteCharacteristic* pLatencyControl;
 bool connected = false;
+bool latencyTestComplete = false;
+uint64_t avgLatency = 0;
+bool startLatencyTest = false;
+bool responseReceived = false;
 
 // Time tracking
 uint64_t lastServerTimestamp = 0;
@@ -40,6 +46,26 @@ class ClientCallbacks : public BLEClientCallbacks {
     }
 };
 
+void latencyNotifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify) {
+    if (length == sizeof(uint64_t)) {
+        responseReceived = true;
+        uint64_t serverEchoTime = *((uint64_t*)pData);
+        if (serverEchoTime == 0)
+        {
+            startLatencyTest = true;
+            Serial.println("Received 0s to PING. Starting the latency test.");
+        }
+        else
+        {
+            uint64_t roundtrip = esp_timer_get_time() - serverEchoTime;
+            avgLatency += roundtrip / 2; // Accumulate one-way latency
+            Serial.printf("Received response. Latency equals: %llu.\n", roundtrip / 2);
+        }
+
+    }
+}
+
+
 void timestampNotifyCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic, 
                            uint8_t* pData, size_t length, bool isNotify) {
     if (length == sizeof(uint64_t)) {
@@ -59,21 +85,7 @@ bool connectToServer() {
     
     pClient = BLEDevice::createClient();
     pClient->setClientCallbacks(new ClientCallbacks());
-
-    // // Connection parameters (improves reliability) TODO: Ovo zajebava jako
-    // pClient->setConnectionParams(
-    //     12,  // min interval (1.25ms units) = 15ms
-    //     24,  // max interval (1.25ms units) = 30ms
-    //     0,   // latency
-    //     400  // timeout (10ms units) = 4s
-    // );
-    
-    // // Connect with timeout
-    // if (!pClient->connect(BLEAddress(SERVER_MAC), BLE_ADDR_TYPE_RANDOM, 10000)) {
-    //     Serial.println("Connection timed out");
-    //     return false;
-    // }
-    
+  
     // Connect to the server
     if (!pClient->connect(serverAddress)) {
         Serial.println("Connection failed");
@@ -95,15 +107,57 @@ bool connectToServer() {
         pClient->disconnect();
         return false;
     }
+
+    // Get the timestamp characteristic
+    pLatencyControl = pRemoteService->getCharacteristic(LATENCY_UUID);
+    if (pLatencyControl == nullptr) {
+        Serial.println("Failed to find latency characteristic");
+        pClient->disconnect();
+        return false;
+    }
     
     // Subscribe to notifications
     if(pTimestampChar->canNotify()) {
         pTimestampChar->registerForNotify(timestampNotifyCallback);
     }
+
+    // Subscribe to notifications
+    if(pLatencyControl->canNotify()) {
+        pLatencyControl->registerForNotify(latencyNotifyCallback);
+    }
     
     Serial.println("Connected and subscribed to timestamp updates");
     return true;
 }
+
+void performLatencyTest() {
+    const uint8_t testCount = 10;
+    avgLatency = 0;
+    pLatencyControl->writeValue("PING");
+    Serial.println("Starting latency calibration...");
+
+    while(!startLatencyTest) {delay(50);} // busy wait
+    delay(500); // Space out tests
+    for (int i = 0; i < testCount; i++) {
+        uint64_t sendTime = esp_timer_get_time();
+        pLatencyControl->writeValue((uint8_t*)&sendTime, sizeof(sendTime));
+        
+        Serial.println("Waiting for response.");
+        delay(500); // Space out tests. Ovdje treba nekakav notify mehanizam interni a ne ovako
+        
+        while(!responseReceived) {delay(10);}
+        responseReceived = false
+    }
+    
+    avgLatency /= testCount;
+    Serial.printf("Calibration complete. Avg latency: %llu μs\n", avgLatency);
+    
+    // Switch to timestamp mode
+    pLatencyControl->writeValue("START_TIMESTAMPS");
+    latencyTestComplete = true;
+    startLatencyTest = false;
+}
+
 
 void setup() {
     Serial.begin(115200);
@@ -119,6 +173,8 @@ void setup() {
         Serial.println("Retrying in 5 seconds...");
         delay(5000);
     }
+
+    performLatencyTest();
 }
 
 void loop() {

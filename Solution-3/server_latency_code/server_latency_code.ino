@@ -28,6 +28,7 @@ BUFFER buffers[NUMBER_OF_BUFFERS];
 #define TX_DATA_UUID        "1c95d5e3-d8f7-413a-bf3d-7a2e5d7ab87c" // Notify (buffer data)
 #define RX_CONTROL_UUID     "2c95d5e3-d8f7-413a-bf3d-7a2e5d7ab87c" // Write (control)
 #define TIMESTAMP_UUID      "3c95d5e3-d8f7-413a-bf3d-7a2e5d7ab87c" // Notify (timestamp)
+#define LATENCY_UUID        "4c95d5e3-d8f7-413a-bf3d-7a2e5d7ab87c" // Notify Write (latency)
 
 // GPIO for debug output
 const int redPin = 2;
@@ -44,9 +45,16 @@ BLEServer *pServer;
 BLECharacteristic *pTxData;
 BLECharacteristic *pRxControl;
 BLECharacteristic *pTimestampChar;
+BLECharacteristic *pLatencyControl; // For latency characteristic
+
+
 bool deviceConnected = false;
 bool advertising = false;
 bool firstRoundCompleted = false;
+bool latencyTestMode = true;
+bool startLatencyTest = false; // Vrijednost koja pokazuje da li pocinjemo ili ne sa mjerenjem vremena, podesava se na true sa prvim pingom
+uint8_t latencyCounter = 0; // TODO: Obrisati
+
 uint8_t currentWritingBufferIdx = 0; // Pokazuje koji je bafer trenutno aktivan za upisivanje
 uint32_t sampleCounter = 0;
 uint32_t currentSampleCounter = 0;
@@ -155,7 +163,7 @@ void sampleData(void* arg) {
 
 // Timestamp notification callback
 void sendTimestamp(void* arg) {
-    if (deviceConnected) {
+    if (deviceConnected and !latencyTestMode) {
         uint64_t now = esp_timer_get_time();
         pTimestampChar->setValue((uint8_t *)&now, 8);
         pTimestampChar->notify();
@@ -213,6 +221,35 @@ class ControlCallback: public BLECharacteristicCallbacks {
             // Client confirms receipt; send next chunk
             waitForAck = false;
             sendNextChunk();
+        }
+    }
+};
+
+
+class ControlCallbacksLatency: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pChar) {
+        std::string value = pChar->getValue();
+
+        if (startLatencyTest && value.length() == sizeof(uint64_t))
+        {
+            uint64_t clientSendTime = *((uint64_t*)value.data());
+            pLatencyControl->setValue((uint8_t*)&clientSendTime, sizeof(clientSendTime));
+            pLatencyControl->notify();
+            Serial.printf("Received [%d] timestamp: %llu\n", ++latencyCounter, clientSendTime);
+        }
+        else if (value == "PING") {
+            // Immediately echo back with server's receive time
+            latencyCounter = 0;
+            startLatencyTest = true;
+            uint64_t clientSendTime = 0;
+            pLatencyControl->setValue((uint8_t*)&clientSendTime, sizeof(clientSendTime));
+            pLatencyControl->notify();
+            Serial.println("Starting latency test.");
+        }
+        else if (value == "START_TIMESTAMPS") {
+            latencyTestMode = false;
+            startLatencyTest = false;
+            Serial.println("Switching to timestamp mode");
         }
     }
 };
@@ -326,6 +363,18 @@ void setup() {
     BLE2901* pTsDesc = new BLE2901();
     pTsDesc->setDescription("Timestamp (µs since boot)");
     pTimestampChar->addDescriptor(pTsDesc);
+
+    // Latency Control Characteristic (write and notify)
+    pLatencyControl = pService->createCharacteristic(
+        CONTROL_UUID,
+        BLECharacteristic::PROPERTY_WRITE | 
+        BLECharacteristic::PROPERTY_NOTIFY
+    );
+    pLatencyControl->setCallbacks(new ControlCallbacksLatency());
+    pLatencyControl->addDescriptor(new BLE2902());
+    BLE2901* pTsDesc = new BLE2901();
+    pLatencyDesc->setDescription("Latency control.");
+    pLatencyControl->addDescriptor(pLatencyDesc);
     
     // RX Control Characteristic (Write)
     pRxControl = pService->createCharacteristic(
@@ -378,5 +427,5 @@ void loop() {
         advertising = true;
         Serial.println("Restarting advertising");
     }
-    delay(500); // Prevent watchdog reset
+    delay(50); // Prevent watchdog reset
 }
