@@ -22,6 +22,7 @@ BLERemoteCharacteristic *pTimestampChar;
 BLERemoteCharacteristic *pAlertMeasurement; // For incorrect measurement
 
 bool connected = false;
+bool disconnected = true;
 bool latencyTestComplete = false;
 uint64_t avgLatency = 0;
 bool startLatencyTest = false;
@@ -73,6 +74,7 @@ class ClientCallbacks : public BLEClientCallbacks
     {
         Serial.println("Connected to server");
         connected = true;
+        disconnected = false;
         connectionStartTime = esp_timer_get_time();
         Serial.println("Setting up MTU onConnect.");
         setMtuSize(pclient);
@@ -86,16 +88,19 @@ class ClientCallbacks : public BLEClientCallbacks
         // CHUNK_SIZE = DEFAULT_CHUNK_SIZE;
         startLatencyTest = false;
         responseReceived = false;
-        BLEDevice::getScan()->clearResults();
-        delay(100);
+        // BLEDevice::getScan()->clearResults();
+        // delay(100);
 
         // digitalWrite(connectedPin, LOW);
         // Clean up resources
-        BLEDevice::deinit(true); // Full BLE stack reset
-        delay(500);
+        // Serial.println("Deinit in progress");
+        // BLEDevice::deinit(true); // Full BLE stack reset
+        // delay(400);
 
-        BLEDevice::init("ESP32_Client_Alert_Data_Transmission"); // Reinitialize
-        Serial.println("Reinitializing done.");
+        // Serial.println("Init in progress");
+        // BLEDevice::init("ESP32_Client_Alert_Data_Transmission"); // Reinitialize
+        // Serial.println("Reinitializing done.");
+        disconnected = true;
     }
 };
 
@@ -281,7 +286,7 @@ bool connectToServer() {
     //pClient->setMTU(247);
   
     // Connect to the server
-    if (!pClient->connect(serverAddress)) {
+    if (!pClient->connect(serverAddress, BLE_ADDR_TYPE_PUBLIC, 2000)) {
         Serial.println("Connection failed");
         return false;
     }
@@ -454,19 +459,24 @@ void setup() {
 }
 
 void loop() {
-    if (!connected) {
+    if (!connected && disconnected) {
         Serial.println("Attempting reconnection...");
-        if (connectToServer()) {
+        if (connectToServer()) 
+        {
             Serial.println("Reconnected successfully");
             // performLatencyTest();
         }
-        delay(5000);
+        else
+        {
+            delay(2000);
+        }
+        
     }
     
     // Print connection duration periodically
     static uint32_t lastPrint = 0;
     if (millis() - lastPrint > 10000) { // Every 10 seconds
-        if (connected) {
+        if (connected && !disconnected) {
             uint64_t uptime = (esp_timer_get_time() - connectionStartTime) / 1000000;
             Serial.printf("Connection uptime: %llu seconds\n", uptime);
         }
@@ -499,5 +509,5 @@ void loop() {
         }
     }
 
-    delay(20); // Prevent watchdog triggers
+    delay(100); // Prevent watchdog triggers
 }
