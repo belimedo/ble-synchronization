@@ -24,14 +24,14 @@ BLERemoteCharacteristic *pTimestampChar;
 // BLERemoteCharacteristic *pLatencyControl; // For latency characteristic
 BLERemoteCharacteristic *pAlertMeasurement; // For incorrect measurement
 
-bool connected = false;
-bool disconnected = true;
-bool latencyTestComplete = false;
+volatile bool connected = false;
+volatile bool disconnected = true;
+volatile bool latencyTestComplete = false;
 uint64_t avgLatency = 0;
-bool timestampCompleted = false;
-bool responseReceived = false;
-bool readyForTransfer = false;
-bool reconstructionTriggered = false;
+volatile bool timestampCompleted = false;
+volatile bool responseReceived = false;
+volatile bool readyForTransfer = false;
+volatile bool reconstructionTriggered = false;
 
 SemaphoreHandle_t receiveBufferMutex[NUMBER_OF_SEND_BUFFERS];
 
@@ -60,8 +60,8 @@ sendBuffer readData;
 sendBuffer readDataBuffers[NUMBER_OF_SEND_BUFFERS];
 uint8_t buffersReceived = 0;
 uint16_t receivedBytes = 0;
-bool transferActive = false;
-bool sendCommand = false;
+volatile bool transferActive = false;
+volatile bool sendCommand = false;
 
 // Time tracking
 uint64_t lastServerTimestamp = 0;
@@ -112,10 +112,6 @@ void printPowerValues()
             Serial.printf("[Print power] Start time of the data: %llu\n Data samples:\n", readDataBuffers[sendingBufferIdx].timeStamp);
             for (int i = 0; i < SEND_BUFFER_ELEMENTS; i++)
             {
-                if ((i % SAMPLING_FREQUENCY) == 0)
-                {
-                    Serial.printf("\n");
-                }
                 Serial.printf("%d: 0x%4x [A] - 0x%4x [V] p = 0x%4x\n",
                     i, readDataBuffers[sendingBufferIdx].currentBuffer[i], readDataBuffers[sendingBufferIdx].voltageBuffer[i], 
                     abs(readDataBuffers[sendingBufferIdx].currentBuffer[i] - readDataBuffers[sendingBufferIdx].voltageBuffer[i]));
@@ -135,7 +131,7 @@ void powerReconstruction(void* arg)
     // Ukljuci se samo ukoliko je transfer inactive
     if (!transferActive)
     {
-        Serial.println("Reconstruction callback");
+        Serial.println("[Reconstruct] Reconstruction callback");
         uint64_t clientTime = esp_timer_get_time();
         serverAlertTimeStamp = clientTime - timeDiff;
         reconstructionTriggered = true;
@@ -342,7 +338,7 @@ bool connectToServer()
     pClient->setClientCallbacks(new ClientCallbacks());
 
     // Connect to the server
-    if (!pClient->connect(serverAddress, BLE_ADDR_TYPE_PUBLIC_OR_RANDOM , 1000)) {
+    if (!pClient->connect(serverAddress, BLE_ADDR_TYPE_PUBLIC , 1000)) {
         Serial.println("Connection failed");
         return false;
     }

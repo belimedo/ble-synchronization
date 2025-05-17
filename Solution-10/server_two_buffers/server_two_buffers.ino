@@ -22,6 +22,7 @@ sendBuffer buffersToSend[NUMBER_OF_SEND_BUFFERS];
 // mutex init
 SemaphoreHandle_t storeBufferMutex[NUMBER_OF_STORE_BUFFERS]; // One mutex per store buffer
 SemaphoreHandle_t sendBufferMutex[NUMBER_OF_SEND_BUFFERS]; // One mutex per send buffer
+// SemaphoreHandle_t alertMutex;
 
 // Debug handling stuff
 bool DEBUG_PRINTS = true;
@@ -38,12 +39,12 @@ BLECharacteristic *pTimestampChar;
 BLECharacteristic *pAlertMeasurementChar; // For incorrect measurement
 
 
-bool deviceConnected = false;
-bool advertising = false;
+volatile bool deviceConnected = false;
+volatile bool advertising = false;
 // bool latencyTestMode = true;
 // bool startLatencyTest = false; // Vrijednost koja pokazuje da li pocinjemo ili ne sa mjerenjem vremena, podesava se na true sa prvim pingom
-bool sendAlerts = false; // Vrijednost koja pokazuje da li pocinjemo ili ne sa mjerenjem vremena, podesava se na true sa prvim pingom
-bool untilTimestamp = true;
+volatile bool sendAlerts = false; // Vrijednost koja pokazuje da li pocinjemo ili ne sa mjerenjem vremena, podesava se na true sa prvim pingom
+volatile bool untilTimestamp = true;
 
 uint32_t sampleCounter = 0;
 uint32_t currentSampleCounter = 0;
@@ -52,7 +53,7 @@ uint64_t lastSampleTime = 0;
 
 // Globalna promjenljiva za alert indeks
 // TODO: Dodati nekakav semafor za ovo.
-bool alertDetected = false;
+volatile bool alertDetected = false;
 int alertEventIdx;
 uint64_t alertTimeStamp; // Za future.
 
@@ -61,7 +62,7 @@ bool waitForAck = false;
 int alertStoreBufferIdx = 0;
 
 // data transfer values
-bool transferInProgress = false;
+volatile bool transferInProgress = false;
 uint16_t currentChunk = 0;
 uint16_t totalChunks = 0;
 // int sendBufferIdx;
@@ -226,7 +227,7 @@ void sampleData(void* arg) {
         {
             if (DEBUG_PRINTS)
             {
-                Serial.println("[Alert sync] Alerting the client that server discovered abnormality.");
+                Serial.println("[Alert sync] Alert the client that server discovered abnormality.");
                 Serial.printf("[Alert sync] Time of detection: %llu\n", now);
             }
             alertDetected = true;
@@ -256,15 +257,22 @@ void sampleData(void* arg) {
         
         // Trigger alert characteristic
         // Alerts cannot be triggered if current alert is being processed
-        if (sendAlerts && deviceConnected && alertDetected) // TODO: Mozda bih mogao samo sendAlerts onemoguciti dok se ne zavrsi proces transferInProgress
+        // Serial.println("[Alert sync] Taking alert mutex.");
+        // if ((xSemaphoreTake(alertMutex, 1)  == pdTRUE) && deviceConnected && alertDetected && sendAlerts) // TODO: Mozda bih mogao samo sendAlerts onemoguciti dok se ne zavrsi proces transferInProgress
+        if (deviceConnected && alertDetected && sendAlerts) // TODO: Mozda bih mogao samo sendAlerts onemoguciti dok se ne zavrsi proces transferInProgress
         {
             if (DEBUG_PRINTS)
             {
-                Serial.println("[Alert sync] Sending notify for alert.");
+                Serial.println("[Alert sync] Sending notify for alert. Disable other Alerts");
             }
+            sendAlerts = false;
             pAlertMeasurementChar->setValue((uint8_t *)&alertTimeStamp, sizeof(uint64_t));
             pAlertMeasurementChar->notify();
         }
+        // else
+        // {
+        //     Serial.println("[Alert sync] Unsuccessful alert mutex take.");
+        // }
     }
     else 
     {
@@ -281,6 +289,8 @@ void sendTimestamp(void* arg) {
         // TODO: Ovdje dodati nekakav if ako je transfer u toku da se ne dira
         if (untilTimestamp)
         {
+            // xSemaphoreGive(alertMutex);
+            Serial.println("[Time stamp] Enabling the alert sending.");
             sendAlerts = true;
             untilTimestamp = false;
         }
@@ -306,12 +316,33 @@ class ServerCallbacks: public BLEServerCallbacks
             Serial.printf("[Server on connect] Store buffer elements: %d\n", STORE_BUFFER_ELEMENTS);
         }
         // Restart timstamp notifications on reconnect
+        Serial.println("[Server on connect] Disabling alerts.");
+        sendAlerts = false;
+        // if (xSemaphoreTake(alertMutex, 1) == pdTRUE) 
+        // {
+        //     Serial.println("Successful alert mutex lock.");
+        // }
+        // else
+        // {
+        //     Serial.println("Unsccessful alert mutex lock.");
+        // }
+
         esp_timer_start_periodic(timestampTimer, TIMESYNC_INTERVAL_US);
     }
 
     void onDisconnect(BLEServer* pServer) {
         deviceConnected = false;
         sendAlerts = false;
+        Serial.println("[On disconnect] Disabeling alerts.");
+        // Serial.println("[On Disconnect] Taking alert mutex.");
+        // if (xSemaphoreTake(alertMutex, 1) == pdTRUE) // Blokirajuci poziv, mozda i nije najbolje rjesenje
+        // {
+        //     Serial.println("[On Disconnect] locked alert.");
+        // }
+        // else
+        // {
+        //     Serial.println("[On disconnect]Taking alert mutex.");
+        // }
         CHUNK_SIZE = DEFAULT_CHUNK_SIZE;
         Serial.println("Client disconnected");
         esp_timer_stop(timestampTimer);
@@ -335,6 +366,15 @@ class RxControlCallback: public BLECharacteristicCallbacks
     {
         Serial.println("[Data request] Received message! Disabeling alerts.");
         sendAlerts = false;
+        // if (xSemaphoreTake(alertMutex, 1) == pdTRUE) // Blokirajuci poziv, mozda i nije najbolje rjesenje
+        // {
+        //     Serial.println("[Data request] locked alert mutex.");
+        // }
+        // else
+        // {
+        //     Serial.println("[Data request] Couldn't lock the alert mutex.");
+        // }
+
         String value = pCharacteristic->getValue();
         DATA_REQUEST request;
         // cast const char* to DATA_REQUEST struct
@@ -348,8 +388,6 @@ class RxControlCallback: public BLECharacteristicCallbacks
         // If alert is on this device, there is no need to read data.
         if (!alertDetected)
         {
-
-
             alertTimeStamp = request.alertTimeStamp;
         }     
         // Start new transfer
@@ -502,9 +540,10 @@ class RxControlCallback: public BLECharacteristicCallbacks
         else if(request.command == 4) 
         {
             currentSendingBufferIdx = 0;
-            Serial.println("[Data request] Transfer completed.");
+            Serial.println("[Data request] Transfer completed. Allowing alerts to be sent again.");
             transferInProgress = false;
             sendAlerts = true;
+            // xSemaphoreGive(alertMutex);
             alertDetected = false;
         }
     }
@@ -626,6 +665,16 @@ void setup() {
         Serial.println("Send mutex creation finished.");
     }
 
+    // alertMutex = xSemaphoreCreateMutex();
+    // if(alertMutex == NULL) {
+    //     Serial.println("Alert mutex creation failed!");
+    //     while(1); // Critical failure
+    // }
+    // if (DEBUG_PRINTS)
+    // {
+    //     Serial.println("Alert mutex creation finished.");
+    // }
+
     // Initialize BLE
     BLEDevice::init("ESP32_Server_Alert_Data_Transmission");
     BLEDevice::setMTU(START_MTU_SIZE); // Request larger MTU
@@ -682,24 +731,6 @@ void setup() {
     }
     delay(100);
 
-    // // Latency Control Characteristic (write and notify)
-    // pLatencyControl = pService->createCharacteristic(
-    //     LATENCY_UUID,
-    //     BLECharacteristic::PROPERTY_WRITE | 
-    //     BLECharacteristic::PROPERTY_NOTIFY
-    // );
-    // pLatencyControl->setCallbacks(new ControlCallbacksLatency());
-    // pLatencyControl->addDescriptor(new BLE2902());
-    // // Latency descriptor
-    // BLE2901* pLatencyDesc = new BLE2901();
-    // pLatencyDesc->setDescription("Latency control.");
-    // pLatencyControl->addDescriptor(pLatencyDesc);
-    // // delay after initializing characteristic
-    // if (DEBUG_PRINTS)
-    // {
-    //     Serial.println("Latency characteristic initialized.");
-    // }
-    
     // RX Control Characteristic (Write)
     pRxControl = pService->createCharacteristic(
         RX_CONTROL_UUID,
@@ -717,25 +748,6 @@ void setup() {
         Serial.println("Control characteristic initialized.");
     }
 
-    
-    // // Latency Control Characteristic (write and notify)
-    // pLatencyControl = pService->createCharacteristic(
-    //     LATENCY_UUID,
-    //     BLECharacteristic::PROPERTY_WRITE | 
-    //     BLECharacteristic::PROPERTY_NOTIFY
-    // );
-    // pLatencyControl->setCallbacks(new ControlCallbacksLatency());
-    // pLatencyControl->addDescriptor(new BLE2902());
-    // // Latency descriptor
-    // BLE2901* pLatencyDesc = new BLE2901();
-    // pLatencyDesc->setDescription("Latency control.");
-    // pLatencyControl->addDescriptor(pLatencyDesc);
-    // // delay after initializing characteristic
-    // if (DEBUG_PRINTS)
-    // {
-    //     Serial.println("Latency characteristic initialized.");
-    // }
-    
     Serial.printf("Free heap: %d\n", ESP.getFreeHeap());
     esp_log_level_set("BLE", ESP_LOG_VERBOSE);
     esp_log_level_set("GATT", ESP_LOG_VERBOSE);
