@@ -11,7 +11,7 @@
 #include "../constants.h"
 
 // Error data global data
-#define THRESHOLD_VALUE         (65555) // 0xFF01
+#define THRESHOLD_VALUE         (65283) // 0xFF01
 #define SAMPLE_INTERVAL_US      (10000) // 10 ms, 10 000 us
 #define TIMESYNC_INTERVAL_US    (60000000) // 60 s, 60 000 000 us
 

@@ -342,7 +342,7 @@ bool connectToServer()
     pClient->setClientCallbacks(new ClientCallbacks());
 
     // Connect to the server
-    if (!pClient->connect(serverAddress, BLE_ADDR_TYPE_PUBLIC, 2000)) {
+    if (!pClient->connect(serverAddress, BLE_ADDR_TYPE_PUBLIC_OR_RANDOM , 1000)) {
         Serial.println("Connection failed");
         return false;
     }
