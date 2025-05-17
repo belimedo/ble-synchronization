@@ -405,7 +405,7 @@ class RxControlCallback: public BLECharacteristicCallbacks
                     alertEventIdx = alertTimeDiff / SAMPLE_INTERVAL_US; // (int)samplingIntervalUs Index podatka na kom se dogodio alert. Zaokruzi na vise a ne truc da se posalje i sam alertIdx
                     if (DEBUG_PRINTS)
                     {
-                        Serial.printf("Alert detected at %d idx, current value:0x%2x, voltage value:0x%2x\n", 
+                        Serial.printf("[Alert on timer] Alert detected at %d idx, current value:0x%2x, voltage value:0x%2x\n", 
                             alertEventIdx, storeBuffers[alertStoreBufferIdx].currentBuffer[alertEventIdx], 
                             storeBuffers[alertStoreBufferIdx].voltageBuffer[alertEventIdx]
                         );

@@ -12,22 +12,22 @@
 #define STORE_BUFFER_ELEMENTS    (int)(TIME_STORED_S * SAMPLING_FREQUENCY)
 #define STORE_BUFFER_SIZE       (STORE_BUFFER_ELEMENTS * sizeof(uint16_t))
 // #define SEND_BUFFER_SIZE        (ALERT_TIME_S * SAMPLING_FREQUENCY * sizeof(uint16_t)) // 100ms 1 bafer
-#define SEND_BUFFER_ELEMENTS    (int)(ALERT_TIME_S * SAMPLING_FREQUENCY) + 1 // (alert + 100 ms)
+#define SEND_BUFFER_ELEMENTS    (int)(ALERT_TIME_S * SAMPLING_FREQUENCY + 1) // (alert + 100 ms)
 #define SEND_BUFFER_SIZE        (SEND_BUFFER_ELEMENTS * sizeof(uint16_t)) // 100ms 1 bafer
 
 typedef struct storeBuffer 
 {
     uint16_t    sampleIdx;
     uint64_t    startTimeStamp;
-    uint16_t    currentBuffer[STORE_BUFFER_SIZE];
-    uint16_t    voltageBuffer[STORE_BUFFER_SIZE];
+    uint16_t    currentBuffer[STORE_BUFFER_ELEMENTS];
+    uint16_t    voltageBuffer[STORE_BUFFER_ELEMENTS];
 } STORE_BUFFER;
 
 struct sendBuffer
 {
     uint64_t    timeStamp;
-    uint16_t    currentBuffer[SEND_BUFFER_SIZE];
-    uint16_t    voltageBuffer[SEND_BUFFER_SIZE];
+    uint16_t    currentBuffer[SEND_BUFFER_ELEMENTS];
+    uint16_t    voltageBuffer[SEND_BUFFER_ELEMENTS];
 };
 
 /**
