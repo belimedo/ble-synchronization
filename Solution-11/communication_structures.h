@@ -40,7 +40,8 @@ typedef struct dataRequest
     //! 1 - Client sends out alert time; 2 - Request next chunk; 3 - Start of future transfer; 4 - End of all transfer;
     uint8_t     command;
     uint8_t     reconstructionTriggered;
-    uint16_t    alertThresholdValue;
+    uint16_t    currentThresholdValue;
+    uint16_t    voltageThresholdValue;
     // Time on server at which alert happened calculated by the client (scaling parameter, for multiple servers). 
     uint64_t    alertTimeStamp;
 } DATA_REQUEST;

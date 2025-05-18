@@ -74,8 +74,7 @@ uint16_t voltageThreshold;
 uint64_t lastServerTimestamp = 0;
 
 // TODO: Ovo u pajtonu napraviti
-const float cosFiConst[2*PERIOD_ELEMENTS - 1] = {0.f};
-
+const float cosFiConst[2*PERIOD_ELEMENTS - 1] = {0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f};
 
 void setMtuSize(BLEClient* pclient)
 {
@@ -137,7 +136,7 @@ void printPowerValues()
 
 
 // PERIOD_ELEMENTS
-void calculatePowerFromArray()
+void calculatePowerFromArray(bool reconstructionCall)
 {
     // Za bafer proslosti, alert je na mjestu SEND_BUFFER_ELEMENTS - 1, SEND_BUFFER_ELEMENTS ima 21 element, sto znaci da ima 5 perioda i alert.  PERIOD_ELEMENTS
     // Da bi smanjili gresku pri racunanju snage oko alert-a, potrebno je njega postaviti kao sredisnji element u slucaju neparnog broja PERIOD_ELEMENTS a u slucajno parnog broja na polovina - 1. Integer dijeljenje radi trunc tako da je flooring svakako.
@@ -189,7 +188,7 @@ void calculatePowerFromArray()
     // Pronaci fi preko delte kao 2 * PI * delta_t, pa cos(Fi)
     // In case of the reconstruction, we only need to find the thresholds for current and voltage in that period.
     // In case of the alert, for every period sampled.
-    if (reconstructionTriggered)
+    if (reconstructionCall)
     {
         uint16_t maxVoltage = combinedCurrentBuffer[alertPeriod * PERIOD_ELEMENTS];
         uint16_t maxCurrent = combinedVoltageBuffer[alertPeriod * PERIOD_ELEMENTS];
@@ -210,12 +209,14 @@ void calculatePowerFromArray()
         }
         currentThreshold = (uint16_t)maxCurrent * 1.1;
         voltageThreshold = (uint16_t)maxVoltage * 1.1;
+        Serial.printf("[Calcualte Power] New current threshold: %d. New voltage threshold: %d\n", currentThreshold, voltageThreshold);
+        Serial.printf("[Calcualte Power] Max current: %d. Max voltage: %d\n", maxCurrent, maxVoltage);
         // Kada se racuna Fi, posmatra se napon, ako je fi pozitivan onda napon prednjaci, ako je negativan napon kasni
         // kosinus fi racunamo preko lookup tabele za vrijednosti ciji je ulaz delta t pomjeren
         // ako je vrijednost negativna, napon se dogodio prije. Ako je vrijednost pozitivna napon kasni.
         float cosFi = cosFiConst[maxVoltageIdx - maxCurrentIdx + PERIOD_ELEMENTS - 1];
         float power = (maxVoltage * maxCurrent)/2.f * cosFi;
-        Serial.printf("[Calcualte Power] Power for reconstruction period is: %5.f\n", power);
+        Serial.printf("[Calcualte Power] Power for reconstruction period is: %.5f\n", power);
     }
     else
     {
@@ -238,12 +239,13 @@ void calculatePowerFromArray()
                     maxCurrentIdx = periodCounter + i;
                 }
             }
+            Serial.printf("[Calcualte Power] Max current: %d. Max voltage: %d\n", maxCurrent, maxVoltage);
             // Kada se racuna Fi, posmatra se napon, ako je fi pozitivan onda napon prednjaci, ako je negativan napon kasni
             // kosinus fi racunamo preko lookup tabele za vrijednosti ciji je ulaz delta t pomjeren
             // ako je vrijednost negativna, napon se dogodio prije. Ako je vrijednost pozitivna napon kasni.
             float cosFi = cosFiConst[maxVoltageIdx - maxCurrentIdx + PERIOD_ELEMENTS - 1];
             float power = (maxVoltage * maxCurrent)/2.f * cosFi;
-            Serial.printf("[Calcualte Power] Power for period: %d/%d is: %5.f\n",periodCounter/PERIOD_ELEMENTS, combinedElements/PERIOD_ELEMENTS, power);
+            Serial.printf("[Calcualte Power] Power for period: %d/%d is: %.5f\n",periodCounter/PERIOD_ELEMENTS, combinedElements/PERIOD_ELEMENTS, power);
         }
     }
 }
@@ -600,13 +602,31 @@ void loop() {
                 thresholdAlternative %= UINT16_MAX;
                 Serial.println("[Reconstruction] Add new threshold.");
                 request.reconstructionTriggered = 1;
-                request.alertThresholdValue = (thresholdAlternative % 2 == 0) ? THRESHOLD_VALUE_DEFAULT : THRESHOLD_VALUE;
+                if (thresholdAlternative % 2)
+                {
+                    request.currentThresholdValue = THRESHOLD_VALUE;
+                    request.voltageThresholdValue = THRESHOLD_VALUE;
+                }
+                else
+                {
+                    request.currentThresholdValue = THRESHOLD_VALUE_DEFAULT;
+                    request.voltageThresholdValue = THRESHOLD_VALUE_DEFAULT;
+                }
                 reconstructionTriggered = false;
+                sendCommand = false;
+                transferActive = false;
+                sendTransferRequest();
+                calculatePowerFromArray(true);
             }
-            sendCommand = false;
-            transferActive = false;
-            sendTransferRequest();
-            printPowerValues();
+            else
+            {
+                sendCommand = false;
+                transferActive = false;
+                sendTransferRequest();
+                calculatePowerFromArray(false);
+            }
+            
+
         }
     }
 

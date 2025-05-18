@@ -58,7 +58,8 @@ uint64_t lastSampleTime = 0;
 volatile bool alertDetected = false;
 int alertEventIdx;
 uint64_t alertTimeStamp; // Za future.
-uint16_t alertThresholdValue = THRESHOLD_VALUE_DEFAULT;
+uint16_t currentThresholdValue = THRESHOLD_VALUE_DEFAULT;
+uint16_t voltageThresholdValue = THRESHOLD_VALUE_DEFAULT;
 
 // Buffer transfer control
 bool waitForAck = false;
@@ -226,12 +227,12 @@ void sampleData(void* arg) {
         currentBuffer->voltageBuffer[currentBuffer->sampleIdx] = voltageData;
 
         // Alerts cannot be triggered if current alert is being processed
-        if (sendAlerts && (electricCurrentData >= alertThresholdValue || voltageData >= alertThresholdValue)) // lazy evaluation
+        if (sendAlerts && (electricCurrentData >= currentThresholdValue || voltageData >= voltageThresholdValue)) // lazy evaluation
         {
             if (DEBUG_PRINTS)
             {
                 Serial.println("[Alert sync] Alert the client that server discovered abnormality.");
-                Serial.printf("[Alert sync] Time of detection: %llu, alert threshold: %d.\n", now, alertThresholdValue);
+                Serial.printf("[Alert sync] Time of detection: %llu, current alert threshold: %d, voltage alert threshold: %d.\n", now, currentThresholdValue, voltageThresholdValue);
             }
             alertDetected = true;
             alertTimeStamp = now;
@@ -527,7 +528,8 @@ class RxControlCallback: public BLECharacteristicCallbacks
             transferInProgress = false;
             if (request.reconstructionTriggered)
             {
-                alertThresholdValue = request.alertThresholdValue;
+                currentThresholdValue = request.currentThresholdValue;
+                voltageThresholdValue = request.voltageThresholdValue;
             }
             sendAlerts = true;
             alertDetected = false;
@@ -692,7 +694,8 @@ void setup() {
     esp_log_level_set("BLE", ESP_LOG_VERBOSE);
     esp_log_level_set("GATT", ESP_LOG_VERBOSE);
     // Alert threshold value:
-    alertThresholdValue = THRESHOLD_VALUE_DEFAULT;
+    currentThresholdValue = THRESHOLD_VALUE_DEFAULT;
+    voltageThresholdValue = THRESHOLD_VALUE_DEFAULT;
 
     // BLE MAC
     String bleMac = BLEDevice::getAddress().toString();
