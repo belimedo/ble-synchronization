@@ -6,7 +6,7 @@
 #include <freertos/semphr.h>
 #include "esp_timer.h"
 #include "esp_bt.h"
-#include "../power_signal_data.h"
+#include "../power_signal_data_long.h"
 #include "../communication_structures.h"
 #include "../constants.h"
 
@@ -88,7 +88,7 @@ void printHexValues()
     for (int sendingBufferIdx = 0; sendingBufferIdx < NUMBER_OF_SEND_BUFFERS; sendingBufferIdx++)
     {
         Serial.printf("Printing %s buffer.", sendingBufferIdx % 2 == 0 ? "past" : "future");
-        if(xSemaphoreTake(sendBufferMutex[sendingBufferIdx], 2) == pdTRUE) // busy wait 50 ms
+        if(xSemaphoreTake(sendBufferMutex[sendingBufferIdx], 1) == pdTRUE) // busy wait 50 ms
         {
             Serial.printf("Start time of the data: %llu\n Data samples:", buffersToSend[sendingBufferIdx].timeStamp);
             for (int i = 0; i < SEND_BUFFER_ELEMENTS; i++)
@@ -104,7 +104,7 @@ void printHexValues()
         }
         else
         {
-            Serial.println("Couldn't access lock in print hex values.");
+            Serial.println("[Failed] Couldn't access lock in print hex values.");
         }
     }
 }
@@ -113,7 +113,7 @@ void printHexValues()
 // future buffer callback
 void fillFutureBuffer(void* arg)
 {
-    if(xSemaphoreTake(storeBufferMutex[alertStoreBufferIdx], 2) == pdTRUE) // busy wait 5 ms
+    if(xSemaphoreTake(storeBufferMutex[alertStoreBufferIdx], 1) == pdTRUE) // busy wait 5 ms
     {
         if (DEBUG_PRINTS)
         {
@@ -134,7 +134,7 @@ void fillFutureBuffer(void* arg)
                 Serial.println("[Future buffer] Data after alert is in two buffers.");
                 Serial.printf("[Future buffer] Copying first batch of %d indices.\n", firstBufferSize);
             }
-            if(xSemaphoreTake(sendBufferMutex[currentSendingBufferIdx], 2) == pdTRUE)
+            if(xSemaphoreTake(sendBufferMutex[currentSendingBufferIdx], 1) == pdTRUE)
             {
                 buffersToSend[currentSendingBufferIdx].timeStamp = alertTimeStamp;
                 memcpy(buffersToSend[currentSendingBufferIdx].currentBuffer, &storeBuffers[alertStoreBufferIdx].currentBuffer[alertEventIdx], firstBufferSize);
@@ -147,13 +147,13 @@ void fillFutureBuffer(void* arg)
             }
 
             
-            if(xSemaphoreTake(storeBufferMutex[nextAlertStoreBufferIdx], 2) == pdTRUE) // busy wait 50 ms
+            if(xSemaphoreTake(storeBufferMutex[nextAlertStoreBufferIdx], 1) == pdTRUE) // busy wait 50 ms
             {
                 if (DEBUG_PRINTS)
                 {
                     Serial.printf("[Future buffer] Copying second batch of %d indices.\n", overheadIndices);
                 }
-                if(xSemaphoreTake(sendBufferMutex[currentSendingBufferIdx], 2) == pdTRUE)
+                if(xSemaphoreTake(sendBufferMutex[currentSendingBufferIdx], 1) == pdTRUE)
                 {
                     memcpy(buffersToSend[currentSendingBufferIdx].currentBuffer, &storeBuffers[nextAlertStoreBufferIdx].currentBuffer[0], overheadIndices);
                     memcpy(buffersToSend[currentSendingBufferIdx].voltageBuffer, &storeBuffers[nextAlertStoreBufferIdx].voltageBuffer[0], overheadIndices);
@@ -176,7 +176,7 @@ void fillFutureBuffer(void* arg)
             {
                 Serial.println("[Future buffer] Data after alert is in one buffer.");
             }
-            if(xSemaphoreTake(sendBufferMutex[currentSendingBufferIdx], 2) == pdTRUE)
+            if(xSemaphoreTake(sendBufferMutex[currentSendingBufferIdx], 1) == pdTRUE)
             {
                 buffersToSend[currentSendingBufferIdx].timeStamp = alertTimeStamp;
                 memcpy(buffersToSend[currentSendingBufferIdx].currentBuffer, &storeBuffers[alertStoreBufferIdx].currentBuffer[alertEventIdx], SEND_BUFFER_SIZE);
@@ -194,7 +194,7 @@ void fillFutureBuffer(void* arg)
     }
     else
     {
-        Serial.printf("[Future buffer] Problem with allocating store buffer %d", alertStoreBufferIdx);
+        Serial.printf("[Failed Future buffer] Problem with allocating store buffer %d", alertStoreBufferIdx);
     }        
 }
 
@@ -207,7 +207,7 @@ void sampleData(void* arg) {
     int16_t voltageData;
     STORE_BUFFER *currentBuffer;
     // Try to lock current buffer (non-blocking)
-    if(xSemaphoreTake(storeBufferMutex[currentStoreBufferIdx], 2) == pdTRUE)  // Minimalno blocking vrijeme mora biti manje od (1/SAMPLING_FREQUENCY)/2 10 ms / 2 je 5
+    if(xSemaphoreTake(storeBufferMutex[currentStoreBufferIdx], 1) == pdTRUE)  // Minimalno blocking vrijeme mora biti manje od (1/SAMPLING_FREQUENCY)/2 10 ms / 2 je 5
     {
         // Get current buffer
         currentBuffer = &storeBuffers[currentStoreBufferIdx];
@@ -232,7 +232,7 @@ void sampleData(void* arg) {
             if (DEBUG_PRINTS)
             {
                 Serial.println("[Alert sync] Alert the client that server discovered abnormality.");
-                Serial.printf("[Alert sync] Time of detection: %llu, current alert threshold: %d, voltage alert threshold: %d.\n", now, currentThresholdValue, voltageThresholdValue);
+                Serial.printf("[Alert sync] Time of detection: %llu, current alert threshold: %d [A], voltage alert threshold: %d [V].\n[Alert sync] Measured value: %d [A] %d [V]\n", now, currentThresholdValue, voltageThresholdValue, electricCurrentData, voltageData);
             }
             alertDetected = true;
             alertTimeStamp = now;
@@ -269,7 +269,7 @@ void sampleData(void* arg) {
     }
     else 
     {
-        Serial.printf("[Dropping sample] Buffer %d locked, dropping the sample.\n", currentStoreBufferIdx);
+        Serial.printf("[Failed Dropping sample] Buffer %d locked, dropping the sample.\n", currentStoreBufferIdx);
     }
 }
 
@@ -373,7 +373,7 @@ class RxControlCallback: public BLECharacteristicCallbacks
             // Find matching buffer (implementation depends on your storage logic)
             for(int i=0; i<NUMBER_OF_STORE_BUFFERS; i++) 
             {
-                if(xSemaphoreTake(storeBufferMutex[i], 2) == pdTRUE) // busy wait  5 ms
+                if(xSemaphoreTake(storeBufferMutex[i], 1) == pdTRUE) // busy wait  5 ms
                 {
                     if(abs(int(storeBuffers[i].startTimeStamp - alertTimeStamp)) < minDiff) 
                     {
@@ -384,7 +384,7 @@ class RxControlCallback: public BLECharacteristicCallbacks
                 }
                 else
                 {
-                    Serial.printf("[Data request] Unable to lock store buffer %d.\n", i);
+                    Serial.printf("[Failed Data request] Unable to lock store buffer %d.\n", i);
                 }
             }
             // TODO: Sta ako ne nadjem alertStoreBufferIdx, mozda vrtiti u while petlji?
@@ -399,7 +399,7 @@ class RxControlCallback: public BLECharacteristicCallbacks
                 Serial.printf("[Data request] Locking the store mutex to transfer the data!\n");
             }
             // Copy data.
-            if(xSemaphoreTake(storeBufferMutex[alertStoreBufferIdx], 2) == pdTRUE) // busy wait 5 ms
+            if(xSemaphoreTake(storeBufferMutex[alertStoreBufferIdx], 1) == pdTRUE) // busy wait 5 ms
             {
                 // Find alertIdx
                 int sampleIdxDiff; 
@@ -411,7 +411,7 @@ class RxControlCallback: public BLECharacteristicCallbacks
                         Serial.println("[Data request] Alert time diff is negative! Taking previous buffer");
                         // Ovdje sada treba da preuzmemo prethodni bafer index.
                         int prevAlertBufferIdx = (alertStoreBufferIdx == 0) ? NUMBER_OF_STORE_BUFFERS - 1 : alertStoreBufferIdx - 1;
-                        if(xSemaphoreTake(storeBufferMutex[prevAlertBufferIdx], 2) == pdTRUE)
+                        if(xSemaphoreTake(storeBufferMutex[prevAlertBufferIdx], 1) == pdTRUE)
                         {
                             // Give old buffer
                             xSemaphoreGive(storeBufferMutex[alertStoreBufferIdx]);
@@ -421,7 +421,7 @@ class RxControlCallback: public BLECharacteristicCallbacks
                         }
                         else
                         {
-                            Serial.printf("[Data request] Unable to acquire previous store buffer: %d.\n", prevAlertBufferIdx);
+                            Serial.printf("[Failed Data request] Unable to acquire previous store buffer: %d.\n", prevAlertBufferIdx);
                         }
                     }
                     alertEventIdx = alertTimeDiff / SAMPLE_INTERVAL_US; // (int)samplingIntervalUs Index podatka na kom se dogodio alert. Zaokruzi na vise a ne truc da se posalje i sam alertIdx
@@ -436,7 +436,7 @@ class RxControlCallback: public BLECharacteristicCallbacks
                 sampleIdxDiff = alertEventIdx - SEND_BUFFER_ELEMENTS + 1; // Dobijamo pocetni idx
                 if (sampleIdxDiff >= 0)
                 {
-                    if(xSemaphoreTake(sendBufferMutex[currentSendingBufferIdx], 2) == pdTRUE)
+                    if(xSemaphoreTake(sendBufferMutex[currentSendingBufferIdx], 1) == pdTRUE)
                     {
                         buffersToSend[currentSendingBufferIdx].timeStamp = storeBuffers[alertStoreBufferIdx].startTimeStamp + sampleIdxDiff * SAMPLE_INTERVAL_US; // (int)samplingIntervalUs
                         memcpy(buffersToSend[currentSendingBufferIdx].currentBuffer, &storeBuffers[alertStoreBufferIdx].currentBuffer[sampleIdxDiff], SEND_BUFFER_SIZE);
@@ -445,7 +445,7 @@ class RxControlCallback: public BLECharacteristicCallbacks
                     }
                     else
                     {
-                        Serial.printf("[Data request] Command 1, unable to lock send buffer %d.\n", currentSendingBufferIdx);
+                        Serial.printf("[Failed Data request] Command 1, unable to lock send buffer %d.\n", currentSendingBufferIdx);
                     }
                 }
                 else
@@ -459,9 +459,9 @@ class RxControlCallback: public BLECharacteristicCallbacks
                         Serial.printf("[Data request] Taking lock of store buffer %d.\n", prevAlertStoreBufferIdx);
                     }
                     // Popuni prvo iz proslog store bafera
-                    if(xSemaphoreTake(storeBufferMutex[prevAlertStoreBufferIdx], 2) == pdTRUE)
+                    if(xSemaphoreTake(storeBufferMutex[prevAlertStoreBufferIdx], 1) == pdTRUE)
                     {
-                        if(xSemaphoreTake(sendBufferMutex[currentSendingBufferIdx], 2) == pdTRUE)
+                        if(xSemaphoreTake(sendBufferMutex[currentSendingBufferIdx], 1) == pdTRUE)
                         {
                             buffersToSend[currentSendingBufferIdx].timeStamp = storeBuffers[alertStoreBufferIdx].startTimeStamp - prevSize * SAMPLE_INTERVAL_US; // Moramo oduzeti vrijeme SAMPLE_INTERVAL_US
                             memcpy(buffersToSend[currentSendingBufferIdx].currentBuffer, &storeBuffers[prevAlertStoreBufferIdx].currentBuffer[prevStartIdx], prevSize);
@@ -470,16 +470,16 @@ class RxControlCallback: public BLECharacteristicCallbacks
                         }
                         else
                         {
-                            Serial.printf("[Data request] Command 1, unable to lock send buffer %d.\n", currentSendingBufferIdx);
+                            Serial.printf("[Failed Data request] Command 1, unable to lock send buffer %d.\n", currentSendingBufferIdx);
                         }
                         xSemaphoreGive(storeBufferMutex[prevAlertStoreBufferIdx]);
                     }
                     else
                     {
-                        Serial.printf("[Data request] Command 1, unable lock of store buffer %d.\n", prevAlertStoreBufferIdx);
+                        Serial.printf("[Failed Data request] Command 1, unable lock of store buffer %d.\n", prevAlertStoreBufferIdx);
                     }
                     // Popuni iz trenutnog store bafera
-                    if(xSemaphoreTake(sendBufferMutex[currentSendingBufferIdx], 2) == pdTRUE)
+                    if(xSemaphoreTake(sendBufferMutex[currentSendingBufferIdx], 1) == pdTRUE)
                     {
                         memcpy(&buffersToSend[currentSendingBufferIdx].currentBuffer[prevSize], &storeBuffers[alertStoreBufferIdx].currentBuffer[0], alertEventIdx + 1);
                         memcpy(&buffersToSend[currentSendingBufferIdx].voltageBuffer[prevSize], &storeBuffers[alertStoreBufferIdx].voltageBuffer[0], alertEventIdx + 1);
@@ -487,7 +487,7 @@ class RxControlCallback: public BLECharacteristicCallbacks
                     }
                     else
                     {
-                        Serial.printf("[Data request] Command 1, unable to lock send buffer %d\n.", currentSendingBufferIdx);
+                        Serial.printf("[Failed Data request] Command 1, unable to lock send buffer %d\n.", currentSendingBufferIdx);
                     }
                 }
                 if (DEBUG_PRINTS)
@@ -530,7 +530,7 @@ class RxControlCallback: public BLECharacteristicCallbacks
             {
                 currentThresholdValue = request.currentThresholdValue;
                 voltageThresholdValue = request.voltageThresholdValue;
-                Serial.printf("[Threshold change] New threshold values: %d [V] %d [A].", voltageThresholdValue, currentThresholdValue);
+                Serial.printf("[Threshold change] New threshold values: %d [V] %d [A].\n", voltageThresholdValue, currentThresholdValue);
             }
             sendAlerts = true;
             alertDetected = false;
@@ -545,7 +545,7 @@ void sendChunk()
     {
         Serial.printf("[Send chunks] Locking the send mutex %d to send chunks!\n", currentSendingBufferIdx);
     }
-    if(xSemaphoreTake(sendBufferMutex[currentSendingBufferIdx], 2) == pdTRUE && transferInProgress) 
+    if(xSemaphoreTake(sendBufferMutex[currentSendingBufferIdx], 1) == pdTRUE && transferInProgress) 
     {   
         // Everything can fit in a single message.
         uint16_t chunkSize;
@@ -573,7 +573,7 @@ void sendChunk()
     } 
     else 
     {
-        Serial.printf("[Send chunks] Failed to acquire send buffer %d lock!\n", currentSendingBufferIdx);
+        Serial.printf("[Failed Send chunks] Failed to acquire send buffer %d lock!\n", currentSendingBufferIdx);
     }
 }
 

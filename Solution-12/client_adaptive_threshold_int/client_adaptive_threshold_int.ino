@@ -7,7 +7,7 @@
 #include "esp_bt.h"
 #include "../constants.h"
 #include "../communication_structures.h"
-#include "../power_signal_data.h"
+#include "../power_signal_data_long.h"
 //#include "esp_gap_ble_api.h"
 
 static BLEAddress serverAddress(ESP_A_MAC);
@@ -179,6 +179,7 @@ void calculatePowerFromArray(bool reconstructionCall)
     // In case of the alert, for every period sampled.
     if (reconstructionCall)
     {
+        // TODO: Dodati ovdje combined semafor isto :)  kao i gore
         Serial.println("[Reconstruction] Reconstructing period values:");
         Serial.printf("%d: %d [V] - %d [A]\n", alertPeriod * PERIOD_ELEMENTS, combinedVoltageBuffer[alertPeriod * PERIOD_ELEMENTS], combinedCurrentBuffer[alertPeriod * PERIOD_ELEMENTS]);
         int16_t maxCurrent = combinedCurrentBuffer[alertPeriod * PERIOD_ELEMENTS];
@@ -204,13 +205,13 @@ void calculatePowerFromArray(bool reconstructionCall)
         currentThreshold = maxCurrent > 0 ? (int16_t)ceil(maxCurrent * 1.1) : DEFAULT_THRESHOLD_CURRENT; // 10% increment of the threshold
         voltageThreshold = maxVoltage > 0 ? (int16_t)ceil(maxVoltage * 1.1) : DEFAULT_THRESHOLD_VOLTAGE;
         thresholdsReady = true;
-        Serial.printf("[Calcualte Power] New current threshold: %d. New voltage threshold: %d.\n", currentThreshold, voltageThreshold);
-        Serial.printf("[Calcualte Power] Max current: %d. Max voltage: %d\n", maxCurrent, maxVoltage);
+        Serial.printf("[Calculate Power] New current threshold: %d. New voltage threshold: %d.\n", currentThreshold, voltageThreshold);
+        Serial.printf("[Calculate Power] Max current: %d. Max voltage: %d\n", maxCurrent, maxVoltage);
         // Kada se racuna Fi, posmatra se napon, ako je fi pozitivan onda napon prednjaci, ako je negativan napon kasni
         // kosinus fi racunamo preko lookup tabele za vrijednosti ciji je ulaz delta t pomjeren
         // ako je vrijednost negativna, napon se dogodio prije. Ako je vrijednost pozitivna napon kasni.
         float power = (maxVoltage * maxCurrent)/2.f * COS_PHI_TABLE[maxVoltageIdx - maxCurrentIdx + PERIOD_ELEMENTS - 1];
-        Serial.printf("[Calcualte Power] Power for reconstruction period is: %.5f\n", power);
+        Serial.printf("[Calculate Power] Power for reconstruction period is: %.5f\n", power);
     }
     else
     {
@@ -233,13 +234,17 @@ void calculatePowerFromArray(bool reconstructionCall)
                     maxCurrentIdx = periodCounter + i;
                 }
             }
-            Serial.printf("[Calcualte Power] Max current: %d. Max voltage: %d\n", maxCurrent, maxVoltage);
+            Serial.printf("[Calculate Power] Max current: %d. Max voltage: %d\n", maxCurrent, maxVoltage);
             // Kada se racuna Fi, posmatra se napon, ako je fi pozitivan onda napon prednjaci, ako je negativan napon kasni
             // kosinus fi racunamo preko lookup tabele za vrijednosti ciji je ulaz delta t pomjeren
             // ako je vrijednost negativna, napon se dogodio prije. Ako je vrijednost pozitivna napon kasni.
             float power = (maxVoltage * maxCurrent)/2.f * COS_PHI_TABLE[maxVoltageIdx - maxCurrentIdx + PERIOD_ELEMENTS - 1];
-            Serial.printf("[Calcualte Power] Power for period: %d/%d is: %.5f\n",periodCounter/PERIOD_ELEMENTS + 1, combinedElements/PERIOD_ELEMENTS, power);
+            Serial.printf("[Calculate Power] Power for period: %d/%d is: %.5f\n",periodCounter/PERIOD_ELEMENTS + 1, combinedElements/PERIOD_ELEMENTS, power);
         }
+        Serial.printf("[Calculate Power] Alert done. Resetting thresholds to default.\n");
+        voltageThreshold = DEFAULT_THRESHOLD_VOLTAGE;
+        currentThreshold = DEFAULT_THRESHOLD_CURRENT;
+        thresholdsReady = true;
     }
 }
 
@@ -607,10 +612,16 @@ void loop() {
             }
             else
             {
+                calculatePowerFromArray(false);
+                if (thresholdsReady)
+                {
+                    request.currentThresholdValue = currentThreshold;
+                    request.voltageThresholdValue = voltageThreshold;
+                    thresholdsReady = false;
+                }
                 sendCommand = false;
                 transferActive = false;
                 sendTransferRequest();
-                calculatePowerFromArray(false);
                 // printPowerValues();
             }
             
