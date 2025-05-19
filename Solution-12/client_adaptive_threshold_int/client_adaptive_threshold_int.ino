@@ -162,8 +162,8 @@ void calculatePowerFromArray(bool reconstructionCall)
     }
     if(xSemaphoreTake(receiveBufferMutex[1], 5) == pdTRUE)
     {
-        memcpy(&combinedCurrentBuffer[(SEND_BUFFER_ELEMENTS - firstBufferSkip)], &readDataBuffers[1].currentBuffer[secondBufferSkip], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - secondBufferSkip));
-        memcpy(&combinedVoltageBuffer[(SEND_BUFFER_ELEMENTS - firstBufferSkip)], &readDataBuffers[1].voltageBuffer[secondBufferSkip], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - secondBufferSkip));
+        memcpy(&combinedCurrentBuffer[(SEND_BUFFER_ELEMENTS - firstBufferSkip)], &readDataBuffers[1].currentBuffer[1], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - secondBufferSkip));
+        memcpy(&combinedVoltageBuffer[(SEND_BUFFER_ELEMENTS - firstBufferSkip)], &readDataBuffers[1].voltageBuffer[1], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - secondBufferSkip));
         xSemaphoreGive(receiveBufferMutex[1]);
     }
     else
@@ -179,6 +179,8 @@ void calculatePowerFromArray(bool reconstructionCall)
     // In case of the alert, for every period sampled.
     if (reconstructionCall)
     {
+        Serial.println("[Reconstruction] Reconstructing period values:");
+        Serial.printf("%d: %d [V] - %d [A]\n", alertPeriod * PERIOD_ELEMENTS, combinedVoltageBuffer[alertPeriod * PERIOD_ELEMENTS], combinedCurrentBuffer[alertPeriod * PERIOD_ELEMENTS]);
         int16_t maxCurrent = combinedCurrentBuffer[alertPeriod * PERIOD_ELEMENTS];
         int16_t maxVoltage = combinedVoltageBuffer[alertPeriod * PERIOD_ELEMENTS];
         int maxVoltageIdx = alertPeriod * PERIOD_ELEMENTS;
@@ -197,11 +199,12 @@ void calculatePowerFromArray(bool reconstructionCall)
                 maxCurrent = combinedCurrentBuffer[i];
                 maxCurrentIdx = i;
             }
+            Serial.printf("%d: %d [V] - %d [A]\n", i, combinedVoltageBuffer[i], combinedCurrentBuffer[i]);
         }
-        currentThreshold = maxCurrent > 0 ? (int16_t)(maxCurrent * 1.1) : DEFAULT_THRESHOLD_CURRENT;
-        voltageThreshold = maxVoltage > 0 ? (int16_t)(maxVoltage * 1.1) : DEFAULT_THRESHOLD_VOLTAGE;
+        currentThreshold = maxCurrent > 0 ? (int16_t)ceil(maxCurrent * 1.1) : DEFAULT_THRESHOLD_CURRENT; // 10% increment of the threshold
+        voltageThreshold = maxVoltage > 0 ? (int16_t)ceil(maxVoltage * 1.1) : DEFAULT_THRESHOLD_VOLTAGE;
         thresholdsReady = true;
-        Serial.printf("[Calcualte Power] New current threshold: %d. New voltage threshold: %d\n", currentThreshold, voltageThreshold);
+        Serial.printf("[Calcualte Power] New current threshold: %d. New voltage threshold: %d.\n", currentThreshold, voltageThreshold);
         Serial.printf("[Calcualte Power] Max current: %d. Max voltage: %d\n", maxCurrent, maxVoltage);
         // Kada se racuna Fi, posmatra se napon, ako je fi pozitivan onda napon prednjaci, ako je negativan napon kasni
         // kosinus fi racunamo preko lookup tabele za vrijednosti ciji je ulaz delta t pomjeren
@@ -213,8 +216,8 @@ void calculatePowerFromArray(bool reconstructionCall)
     {
         for (int periodCounter = 0; periodCounter < combinedElements; periodCounter+= PERIOD_ELEMENTS)
         {
-            int16_t maxVoltage = combinedCurrentBuffer[periodCounter];
-            int16_t maxCurrent = combinedVoltageBuffer[periodCounter];
+            int16_t maxCurrent = combinedCurrentBuffer[periodCounter];
+            int16_t maxVoltage = combinedVoltageBuffer[periodCounter];
             int maxVoltageIdx = periodCounter;
             int maxCurrentIdx = periodCounter;
             for (int i = 1; i < PERIOD_ELEMENTS; i++)
@@ -587,7 +590,7 @@ void loop() {
         {
             if (reconstructionTriggered)
             {
-                Serial.printf("[Reconstruction] Add new threshold values: %d [V] %d [A]\n.", voltageThreshold, currentThreshold);
+                Serial.printf("[Reconstruction] Add new threshold values: %d [V] %d [A].\n", voltageThreshold, currentThreshold);
                 request.reconstructionTriggered = 1;
                 calculatePowerFromArray(true);
                 reconstructionTriggered = false;
