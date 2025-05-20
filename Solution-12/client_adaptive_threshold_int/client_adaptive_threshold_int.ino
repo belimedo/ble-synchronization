@@ -35,6 +35,7 @@ volatile bool readyForTransfer = false;
 volatile bool reconstructionTriggered = false;
 
 SemaphoreHandle_t receiveBufferMutex[NUMBER_OF_SEND_BUFFERS];
+SemaphoreHandle_t printBufferMutex;
 
 // timer for reconstruction
 esp_timer_handle_t reconstructionTimer;
@@ -106,7 +107,7 @@ void printPowerValues()
     for (int sendingBufferIdx = 0; sendingBufferIdx < NUMBER_OF_SEND_BUFFERS; sendingBufferIdx++)
     {
         Serial.printf("[Print power] Printing %s buffer.\n", sendingBufferIdx % 2 == 0 ? "past" : "future");
-        if(xSemaphoreTake(receiveBufferMutex[sendingBufferIdx], 5) == pdTRUE)
+        if(xSemaphoreTake(receiveBufferMutex[sendingBufferIdx], 1) == pdTRUE)
         {
             Serial.printf("[Print power] Start time of the data: %llu\n Data samples:\n", readDataBuffers[sendingBufferIdx].timeStamp);
             for (int i = 0; i < SEND_BUFFER_ELEMENTS; i++)
@@ -148,104 +149,122 @@ void calculatePowerFromArray(bool reconstructionCall)
         secondBufferSkip = PERIOD_ELEMENTS / 2 + 2;
 
     }
-    int16_t combinedCurrentBuffer[combinedElements] = {0};
-    int16_t combinedVoltageBuffer[combinedElements] = {0};
-    if(xSemaphoreTake(receiveBufferMutex[0], 5) == pdTRUE)
+    if ((xSemaphoreTake(printBufferMutex, 1) == pdTRUE))
     {
-        memcpy(combinedCurrentBuffer, &readDataBuffers[0].currentBuffer[firstBufferSkip], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - firstBufferSkip));
-        memcpy(combinedVoltageBuffer, &readDataBuffers[0].voltageBuffer[firstBufferSkip], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - firstBufferSkip));
-        xSemaphoreGive(receiveBufferMutex[0]);
-    }
-    else
-    {
-        Serial.println("[Calculate power] Unable to fetch past buffer's mutex.");
-    }
-    if(xSemaphoreTake(receiveBufferMutex[1], 5) == pdTRUE)
-    {
-        memcpy(&combinedCurrentBuffer[(SEND_BUFFER_ELEMENTS - firstBufferSkip)], &readDataBuffers[1].currentBuffer[1], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - secondBufferSkip));
-        memcpy(&combinedVoltageBuffer[(SEND_BUFFER_ELEMENTS - firstBufferSkip)], &readDataBuffers[1].voltageBuffer[1], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - secondBufferSkip));
-        xSemaphoreGive(receiveBufferMutex[1]);
-    }
-    else
-    {
-        Serial.println("[Calculate power] Unable to fetch future buffer's mutex.");
-    }
-    // Sada imam podatke poredane tako da mogu pronaci max 
-    int alertPeriod = (SEND_BUFFER_ELEMENTS - firstBufferSkip) / PERIOD_ELEMENTS;
-    // Pronaci max struju i max napon u periodu. 
-    // Pronaci razliku u njihovim indeksima i tako naci deltu
-    // Pronaci fi preko delte kao 2 * PI * delta_t, pa cos(Fi)
-    // In case of the reconstruction, we only need to find the thresholds for current and voltage in that period.
-    // In case of the alert, for every period sampled.
-    if (reconstructionCall)
-    {
-        // TODO: Dodati ovdje combined semafor isto :)  kao i gore
-        Serial.println("[Reconstruction] Reconstructing period values:");
-        Serial.printf("%d: %d [V] - %d [A]\n", alertPeriod * PERIOD_ELEMENTS, combinedVoltageBuffer[alertPeriod * PERIOD_ELEMENTS], combinedCurrentBuffer[alertPeriod * PERIOD_ELEMENTS]);
-        int16_t maxCurrent = combinedCurrentBuffer[alertPeriod * PERIOD_ELEMENTS];
-        int16_t maxVoltage = combinedVoltageBuffer[alertPeriod * PERIOD_ELEMENTS];
-        int maxVoltageIdx = alertPeriod * PERIOD_ELEMENTS;
-        int maxCurrentIdx = alertPeriod * PERIOD_ELEMENTS;
-        for (int i = (alertPeriod * PERIOD_ELEMENTS) + 1; i < (alertPeriod + 1) * PERIOD_ELEMENTS; i++)
+        int16_t combinedCurrentBuffer[combinedElements] = {0};
+        int16_t combinedVoltageBuffer[combinedElements] = {0};
+        if((xSemaphoreTake(receiveBufferMutex[0], 1) == pdTRUE))
         {
-            // In order to go to the end of the period, we need to put >= in calculating max indices. Just to be sure in our calculation.
-            // I can't use abs values since I don't know how I'm cutting values.
-            if (combinedVoltageBuffer[i] >= maxVoltage)
-            {
-                maxVoltage = combinedVoltageBuffer[i];
-                maxVoltageIdx = i;
-            }
-            if (combinedCurrentBuffer[i] >= maxCurrent)
-            {
-                maxCurrent = combinedCurrentBuffer[i];
-                maxCurrentIdx = i;
-            }
-            Serial.printf("%d: %d [V] - %d [A]\n", i, combinedVoltageBuffer[i], combinedCurrentBuffer[i]);
+            memcpy(combinedCurrentBuffer, &readDataBuffers[0].currentBuffer[firstBufferSkip], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - firstBufferSkip));
+            memcpy(combinedVoltageBuffer, &readDataBuffers[0].voltageBuffer[firstBufferSkip], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - firstBufferSkip));
+            xSemaphoreGive(receiveBufferMutex[0]);
         }
-        currentThreshold = maxCurrent > 0 ? (int16_t)ceil(maxCurrent * 1.1) : DEFAULT_THRESHOLD_CURRENT; // 10% increment of the threshold
-        voltageThreshold = maxVoltage > 0 ? (int16_t)ceil(maxVoltage * 1.1) : DEFAULT_THRESHOLD_VOLTAGE;
-        thresholdsReady = true;
-        Serial.printf("[Calculate Power] New current threshold: %d. New voltage threshold: %d.\n", currentThreshold, voltageThreshold);
-        Serial.printf("[Calculate Power] Max current: %d. Max voltage: %d\n", maxCurrent, maxVoltage);
-        // Kada se racuna Fi, posmatra se napon, ako je fi pozitivan onda napon prednjaci, ako je negativan napon kasni
-        // kosinus fi racunamo preko lookup tabele za vrijednosti ciji je ulaz delta t pomjeren
-        // ako je vrijednost negativna, napon se dogodio prije. Ako je vrijednost pozitivna napon kasni.
-        float power = (maxVoltage * maxCurrent)/2.f * COS_PHI_TABLE[maxVoltageIdx - maxCurrentIdx + PERIOD_ELEMENTS - 1];
-        Serial.printf("[Calculate Power] Power for reconstruction period is: %.5f\n", power);
-    }
-    else
-    {
-        for (int periodCounter = 0; periodCounter < combinedElements; periodCounter+= PERIOD_ELEMENTS)
+        else
         {
-            int16_t maxCurrent = combinedCurrentBuffer[periodCounter];
-            int16_t maxVoltage = combinedVoltageBuffer[periodCounter];
-            int maxVoltageIdx = periodCounter;
-            int maxCurrentIdx = periodCounter;
-            for (int i = 1; i < PERIOD_ELEMENTS; i++)
+            Serial.println("[Calculate power] Unable to fetch past buffer's mutex.");
+        }
+        if(xSemaphoreTake(receiveBufferMutex[1], 1) == pdTRUE)
+        {
+            memcpy(&combinedCurrentBuffer[(SEND_BUFFER_ELEMENTS - firstBufferSkip)], &readDataBuffers[1].currentBuffer[1], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - secondBufferSkip));
+            memcpy(&combinedVoltageBuffer[(SEND_BUFFER_ELEMENTS - firstBufferSkip)], &readDataBuffers[1].voltageBuffer[1], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - secondBufferSkip));
+            xSemaphoreGive(receiveBufferMutex[1]);
+        }
+        else
+        {
+            Serial.println("[Calculate power] Unable to fetch future buffer's mutex.");
+        }
+        // Sada imam podatke poredane tako da mogu pronaci max 
+        int alertPeriod = (SEND_BUFFER_ELEMENTS - firstBufferSkip) / PERIOD_ELEMENTS;
+        // Pronaci max struju i max napon u periodu. 
+        // Pronaci razliku u njihovim indeksima i tako naci deltu
+        // Pronaci fi preko delte kao 2 * PI * delta_t, pa cos(Fi)
+        // In case of the reconstruction, we only need to find the thresholds for current and voltage in that period.
+        // In case of the alert, for every period sampled.
+        if (reconstructionCall)
+        {
+            // TODO: Dodati ovdje combined semafor isto :)  kao i gore
+            Serial.println("[Reconstruction] Reconstructing period values:");
+            Serial.printf("%d: %d [V] - %d [A]\n", alertPeriod * PERIOD_ELEMENTS, combinedVoltageBuffer[alertPeriod * PERIOD_ELEMENTS], combinedCurrentBuffer[alertPeriod * PERIOD_ELEMENTS]);
+            int16_t maxCurrent = combinedCurrentBuffer[alertPeriod * PERIOD_ELEMENTS];
+            int16_t maxVoltage = combinedVoltageBuffer[alertPeriod * PERIOD_ELEMENTS];
+            int maxVoltageIdx = alertPeriod * PERIOD_ELEMENTS;
+            int maxCurrentIdx = alertPeriod * PERIOD_ELEMENTS;
+            for (int i = (alertPeriod * PERIOD_ELEMENTS) + 1; i < (alertPeriod + 1) * PERIOD_ELEMENTS; i++)
             {
-                if (combinedVoltageBuffer[periodCounter + i] > maxVoltage)
+                // In order to go to the end of the period, we need to put >= in calculating max indices. Just to be sure in our calculation.
+                // I can't use abs values since I don't know how I'm cutting values.
+                if (combinedVoltageBuffer[i] >= maxVoltage)
                 {
-                    maxVoltage = combinedVoltageBuffer[periodCounter + i];
-                    maxVoltageIdx = periodCounter + i;
+                    maxVoltage = combinedVoltageBuffer[i];
+                    maxVoltageIdx = i;
                 }
-                if (combinedCurrentBuffer[periodCounter + i] > maxCurrent)
+                if (combinedCurrentBuffer[i] >= maxCurrent)
                 {
-                    maxCurrent = combinedCurrentBuffer[periodCounter + i];
-                    maxCurrentIdx = periodCounter + i;
+                    maxCurrent = combinedCurrentBuffer[i];
+                    maxCurrentIdx = i;
                 }
+                Serial.printf("%d: %d [V] - %d [A]\n", i, combinedVoltageBuffer[i], combinedCurrentBuffer[i]);
             }
+            currentThreshold = maxCurrent > 0 ? (int16_t)ceil(maxCurrent * 1.1) : DEFAULT_THRESHOLD_CURRENT; // 10% increment of the threshold
+            voltageThreshold = maxVoltage > 0 ? (int16_t)ceil(maxVoltage * 1.1) : DEFAULT_THRESHOLD_VOLTAGE;
+            thresholdsReady = true;
+            Serial.printf("[Calculate Power] New current threshold: %d. New voltage threshold: %d.\n", currentThreshold, voltageThreshold);
             Serial.printf("[Calculate Power] Max current: %d. Max voltage: %d\n", maxCurrent, maxVoltage);
             // Kada se racuna Fi, posmatra se napon, ako je fi pozitivan onda napon prednjaci, ako je negativan napon kasni
             // kosinus fi racunamo preko lookup tabele za vrijednosti ciji je ulaz delta t pomjeren
             // ako je vrijednost negativna, napon se dogodio prije. Ako je vrijednost pozitivna napon kasni.
             float power = (maxVoltage * maxCurrent)/2.f * COS_PHI_TABLE[maxVoltageIdx - maxCurrentIdx + PERIOD_ELEMENTS - 1];
-            Serial.printf("[Calculate Power] Power for period: %d/%d is: %.5f\n",periodCounter/PERIOD_ELEMENTS + 1, combinedElements/PERIOD_ELEMENTS, power);
+            Serial.printf("[Calculate Power] Power for reconstruction period is: %.5f\n", power);
         }
-        Serial.printf("[Calculate Power] Alert done. Resetting thresholds to default.\n");
-        voltageThreshold = DEFAULT_THRESHOLD_VOLTAGE;
-        currentThreshold = DEFAULT_THRESHOLD_CURRENT;
-        thresholdsReady = true;
+        else
+        {
+            for (int periodCounter = 0; periodCounter < combinedElements; periodCounter+= PERIOD_ELEMENTS)
+            {
+                int16_t maxCurrent = combinedCurrentBuffer[periodCounter];
+                int16_t maxVoltage = combinedVoltageBuffer[periodCounter];
+                int maxVoltageIdx = periodCounter;
+                int maxCurrentIdx = periodCounter;
+                if (periodCounter == alertPeriod * PERIOD_ELEMENTS)
+                {
+                    Serial.println("[Calculate Power] Alert period:\n");
+                    Serial.printf(" %d: %d [V] - %d [A]\n", periodCounter, combinedVoltageBuffer[periodCounter], combinedCurrentBuffer[periodCounter]);
+                }
+                for (int i = 1; i < PERIOD_ELEMENTS; i++)
+                {
+                    if (combinedVoltageBuffer[periodCounter + i] > maxVoltage)
+                    {
+                        maxVoltage = combinedVoltageBuffer[periodCounter + i];
+                        maxVoltageIdx = periodCounter + i;
+                    }
+                    if (combinedCurrentBuffer[periodCounter + i] > maxCurrent)
+                    {
+                        maxCurrent = combinedCurrentBuffer[periodCounter + i];
+                        maxCurrentIdx = periodCounter + i;
+                    }
+                    if (periodCounter == alertPeriod * PERIOD_ELEMENTS)
+                    {
+                        Serial.printf(" %d: %d [V] - %d [A]\n", periodCounter + i, combinedVoltageBuffer[periodCounter + i], combinedCurrentBuffer[periodCounter + i]);
+                    }
+                }
+                Serial.printf("[Calculate Power] Max current: %d. Max voltage: %d\n", maxCurrent, maxVoltage);
+                // Kada se racuna Fi, posmatra se napon, ako je fi pozitivan onda napon prednjaci, ako je negativan napon kasni
+                // kosinus fi racunamo preko lookup tabele za vrijednosti ciji je ulaz delta t pomjeren
+                // ako je vrijednost negativna, napon se dogodio prije. Ako je vrijednost pozitivna napon kasni.
+                float power = (maxVoltage * maxCurrent)/2.f * COS_PHI_TABLE[maxVoltageIdx - maxCurrentIdx + PERIOD_ELEMENTS - 1];
+                Serial.printf("[Calculate Power] Power for period: %d/%d is: %.5f\n",periodCounter/PERIOD_ELEMENTS + 1, combinedElements/PERIOD_ELEMENTS, power);
+            }
+            Serial.printf("[Calculate Power] Alert done. Resetting thresholds to default.\n");
+            voltageThreshold = DEFAULT_THRESHOLD_VOLTAGE;
+            currentThreshold = DEFAULT_THRESHOLD_CURRENT;
+            thresholdsReady = true;
+        }
+        xSemaphoreGive(printBufferMutex);
     }
+    else
+    {
+        Serial.println("Unable to take print mutex.");
+    }
+   
 }
 
 
@@ -290,7 +309,7 @@ void dataTransferNotifyCallback(BLERemoteCharacteristic* pBLERemoteCharacteristi
     }
     else if((receivedBytes >= sizeof(sendBuffer)))
     {
-        if(xSemaphoreTake(receiveBufferMutex[buffersReceived], 5) == pdTRUE)
+        if(xSemaphoreTake(receiveBufferMutex[buffersReceived], 1) == pdTRUE)
         {
             if (buffersReceived == 0)
             {
@@ -522,6 +541,13 @@ void setup() {
         Serial.println("[Setup] Receive mutex creation finished.");
     }
 
+    printBufferMutex = xSemaphoreCreateMutex();
+    if(printBufferMutex == NULL) 
+    {
+        Serial.println("[Setup] Print mutex creation failed!");
+        while(1); // Critical failure
+    }
+
     // Initialize BLE
     BLEDevice::init("ESP32_Client_Alert_Data_Transmission"); // Using client MAC in name
 
@@ -593,6 +619,7 @@ void loop() {
         // End all transfers
         else if ((request.command == 4) && sendCommand)
         {
+            // TODO: Razmisliti da li trigger promijeniti i nakon alerta ili samo nakon rekonstrukcije. Ima smisla samo nakon rekonstrukcije.
             if (reconstructionTriggered)
             {
                 Serial.printf("[Reconstruction] Add new threshold values: %d [V] %d [A].\n", voltageThreshold, currentThreshold);
