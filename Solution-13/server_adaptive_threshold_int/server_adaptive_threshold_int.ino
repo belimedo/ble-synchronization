@@ -5,7 +5,6 @@
 #include <BLE2901.h>
 #include <freertos/semphr.h>
 #include "esp_timer.h"
-#include "esp_bt.h"
 #include "../power_signal_data_long.h"
 #include "../communication_structures.h"
 #include "../constants.h"
@@ -73,35 +72,6 @@ float samplingIntervalUs = (1.f / SAMPLING_FREQUENCY) * 1'000'000;
 esp_timer_handle_t sampleTimer;
 esp_timer_handle_t timestampTimer;
 esp_timer_handle_t futureBufferTimer;
-
-
-void printHexValues()
-{
-    Serial.println("Printing future hex values:");
-    for (int sendingBufferIdx = 0; sendingBufferIdx < NUMBER_OF_SEND_BUFFERS; sendingBufferIdx++)
-    {
-        Serial.printf("Printing %s buffer.", sendingBufferIdx % 2 == 0 ? "past" : "future");
-        if(xSemaphoreTake(sendBufferMutex[sendingBufferIdx], pdMS_TO_TICKS(1)) == pdTRUE) // busy wait 50 ms
-        {
-            Serial.printf("Start time of the data: %llu\n Data samples:", buffersToSend[sendingBufferIdx].timeStamp);
-            for (int i = 0; i < SEND_BUFFER_ELEMENTS; i++)
-            {
-                if ((i % SAMPLING_FREQUENCY) == 0)
-                {
-                    Serial.printf("\n");
-                }
-                Serial.printf("%d: 0x%4x [V] - 0x%4x [A], ", i, buffersToSend[sendingBufferIdx].voltageBuffer[i], buffersToSend[sendingBufferIdx].currentBuffer[i]);
-            }
-            Serial.printf("\n");
-            xSemaphoreGive(sendBufferMutex[sendingBufferIdx]);
-        }
-        else
-        {
-            Serial.println("[Failed] Couldn't access lock in print hex values.");
-        }
-    }
-}
-
 
 // future buffer callback
 void fillFutureBuffer(void* arg)
@@ -686,9 +656,6 @@ void setup() {
         Serial.println("[Setup] Control characteristic initialized.");
     }
 
-    Serial.printf("[Setup] Free heap: %d\n", ESP.getFreeHeap());
-    esp_log_level_set("BLE", ESP_LOG_VERBOSE);
-    esp_log_level_set("GATT", ESP_LOG_VERBOSE);
     // Alert threshold value:
     currentThresholdValue = DEFAULT_THRESHOLD_CURRENT;
     voltageThresholdValue = DEFAULT_THRESHOLD_VOLTAGE;

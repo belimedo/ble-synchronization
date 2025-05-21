@@ -30053,7 +30053,7 @@ const int16_t VOLTAGE_SIGNAL[TOTAL_SAMPLES] = {
     149,
     222,
     274,
-    298,
+    298, //3000, // TODO: Change some of it to 3k for example.
     293,
     259,
     200,

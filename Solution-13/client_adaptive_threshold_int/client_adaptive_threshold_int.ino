@@ -636,7 +636,7 @@ void loop() {
             // TODO: Razmisliti da li trigger promijeniti i nakon alerta ili samo nakon rekonstrukcije. Ima smisla samo nakon rekonstrukcije.
             if (reconstructionTriggered)
             {
-                Serial.printf("[Reconstruction] Add new threshold values: %d [V] %d [A].\n", voltageThreshold, currentThreshold);
+                
                 request.reconstructionTriggered = 1;
                 calculatePowerFromArray(true);
                 reconstructionTriggered = false;
@@ -644,6 +644,7 @@ void loop() {
                 transferActive = false;
                 if (thresholdsReady)
                 {
+                    Serial.printf("[Reconstruction] Add new threshold values: %d [V] %d [A].\n", voltageThreshold, currentThreshold);
                     request.currentThresholdValue = currentThreshold;
                     request.voltageThresholdValue = voltageThreshold;
                     thresholdsReady = false;
