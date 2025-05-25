@@ -601,10 +601,11 @@ void sendTransferRequestIdx(int serverIdx) {
     DATA_REQUEST request;
     request.command = servers[serverIdx].currentCommand;
     request.alertTimeStamp = clientAlertTime - timeDiff[serverIdx];
-    if (reconstructionTriggered && thresholdsReady[serverIdx])
+    request.reconstructionTriggered = (uint8_t)reconstructionTriggered;
+    if (reconstructionTriggered)
     {
-        request.currentThresholdValue = currentThreshold[serverIdx];
-        request.voltageThresholdValue = voltageThreshold[serverIdx];
+        request.currentThresholdValue = thresholdsReady[serverIdx] ? currentThreshold[serverIdx] : DEFAULT_THRESHOLD_CURRENT;
+        request.voltageThresholdValue = thresholdsReady[serverIdx] ? voltageThreshold[serverIdx] : DEFAULT_THRESHOLD_VOLTAGE;
     }
 
     if (serverIdx >= 0 && serverIdx < NUMBER_OF_SERVERS) {

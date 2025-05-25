@@ -199,7 +199,7 @@ void sampleData(void* arg) {
             if (DEBUG_PRINTS)
             {
                 Serial.println("[Alert sync] Alert the client that server discovered abnormality.");
-                Serial.printf("[Alert sync] Time of detection: %llu - idx: %d, current threshold: %d [A], voltage threshold: %d [V].\n[Alert sync] Measured value: %d [A] %d [V]\n", now, alertEventIdx, currentThresholdValue, voltageThresholdValue, electricCurrentData, voltageData);
+                Serial.printf("[Alert sync] Time of detection: %llu - idx: %d, current threshold: %d [A], voltage threshold: %d [V].\n[Alert sync] Measured value: %d [A] %d [V]\n", now, alertEventIdx, voltageThresholdValue, currentThresholdValue, electricCurrentData, voltageData);
             }
         }
 
@@ -289,6 +289,17 @@ class ServerCallbacks: public BLEServerCallbacks
         CHUNK_SIZE = DEFAULT_CHUNK_SIZE;
         Serial.println("[On disconnect] Client disconnected");
         esp_timer_stop(timestampTimer);
+        currentThresholdValue = DEFAULT_THRESHOLD_VOLTAGE;
+        voltageThresholdValue = DEFAULT_THRESHOLD_CURRENT;
+        // Oslobodi sve semafore 
+        for (int i = 0; i < NUMBER_OF_STORE_BUFFERS; i++)
+        {
+            xSemaphoreGive(storeBufferMutex[i]);
+        }
+        for (int i = 0; i < NUMBER_OF_SEND_BUFFERS; i++)
+        {
+            xSemaphoreGive(sendBufferMutex[i]);
+        }
 
         // Critical fixes:
         BLEDevice::startAdvertising();
@@ -495,7 +506,7 @@ class RxControlCallback: public BLECharacteristicCallbacks
             {
                 currentThresholdValue = request.currentThresholdValue;
                 voltageThresholdValue = request.voltageThresholdValue;
-                Serial.printf("[Threshold change] New threshold values: %d [V] %d [A].\n", voltageThresholdValue, currentThresholdValue);
+                Serial.printf("[Threshold change] New threshold values in reconstruction session: %d [V] %d [A].\n", voltageThresholdValue, currentThresholdValue);
             }
             sendAlerts = true;
             alertDetected = false;
@@ -584,7 +595,7 @@ void setup() {
     }
 
     // Initialize BLE
-    BLEDevice::init("ESP32_Server_Alert_Data_Transmission_D");
+    BLEDevice::init("ESP32_Server_Data_Transmission_A");
     BLEDevice::setMTU(START_MTU_SIZE); // Request larger MTU
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new ServerCallbacks());

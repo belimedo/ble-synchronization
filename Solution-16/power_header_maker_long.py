@@ -3,7 +3,7 @@ import numpy as np
 # Parameters
 frequency = 50          # Hz
 sampling_rate = 500     # Hz
-duration = 30            # seconds
+duration = 60            # seconds
 samples = sampling_rate * duration
 
 # Time vector
