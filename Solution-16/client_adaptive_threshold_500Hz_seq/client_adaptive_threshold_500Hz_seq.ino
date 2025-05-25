@@ -70,6 +70,11 @@ int16_t currentThreshold[NUMBER_OF_SERVERS] = {0};
 int16_t voltageThreshold[NUMBER_OF_SERVERS] = {0};
 volatile bool thresholdsReady[NUMBER_OF_SERVERS] = {false};
 
+// Combined buffer data
+int combinedElements;
+int firstBufferSkip;
+int secondBufferSkip;
+
 // Semaphores
 SemaphoreHandle_t receiveBufferMutex[NUMBER_OF_SERVERS][NUMBER_OF_SEND_BUFFERS];
 SemaphoreHandle_t dataTransferBufferMutex[NUMBER_OF_SERVERS];
@@ -129,16 +134,14 @@ class ClientCallbacks : public BLEClientCallbacks {
     }
 };
 
-void calculatePowerFromArray(bool reconstructionCall)
+
+void calculateCombinedDataValues()
 {
     // Za bafer proslosti, alert je na mjestu SEND_BUFFER_ELEMENTS - 1, SEND_BUFFER_ELEMENTS ima 21 element, sto znaci da ima 5 perioda i alert.  PERIOD_ELEMENTS
     // Da bi smanjili gresku pri racunanju snage oko alert-a, potrebno je njega postaviti kao sredisnji element u slucaju neparnog broja PERIOD_ELEMENTS a u slucajno parnog broja na polovina - 1. Integer dijeljenje radi trunc tako da je flooring svakako.
     // Za bafer buducnosti, alert je na mjestu 0
 
     // Ukupno imam 2x SEND_BUFFER_ELEMENTS - 1 (jer se alert ponavlja 2x), trebam samo izracunati offset za koji trebam pomjeriti pocetak kopiranja i sa memcpy odraditi smjestanje podataka. Izi pizi lemon skvizi
-    int combinedElements;
-    int firstBufferSkip;
-    int secondBufferSkip;
     if (PERIOD_ELEMENTS % 2 == 1)
     {
         combinedElements = 2 * SEND_BUFFER_ELEMENTS - PERIOD_ELEMENTS - 3;
@@ -152,6 +155,11 @@ void calculatePowerFromArray(bool reconstructionCall)
         secondBufferSkip = PERIOD_ELEMENTS / 2 + 2;
 
     }
+}
+
+
+void calculatePowerFromArray(bool reconstructionCall)
+{
     if ((xSemaphoreTake(powerCalculationMutex, pdMS_TO_TICKS(1)) == pdTRUE))
     {
         // alociraj kombinovane nizove
@@ -162,8 +170,8 @@ void calculatePowerFromArray(bool reconstructionCall)
         {
             if((xSemaphoreTake(receiveBufferMutex[serverIdx][0], pdMS_TO_TICKS(1)) == pdTRUE))
             {
-                memcpy(&combinedCurrentBuffer[serverIdx], &transferDataBuffers[serverIdx][0].currentBuffer[firstBufferSkip], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - firstBufferSkip));
-                memcpy(&combinedVoltageBuffer[serverIdx], &transferDataBuffers[serverIdx][0].voltageBuffer[firstBufferSkip], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - firstBufferSkip));
+                memcpy(&combinedCurrentBuffer[serverIdx][0], &transferDataBuffers[serverIdx][0].currentBuffer[firstBufferSkip], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - firstBufferSkip));
+                memcpy(&combinedVoltageBuffer[serverIdx][0], &transferDataBuffers[serverIdx][0].voltageBuffer[firstBufferSkip], sizeof(int16_t) * (SEND_BUFFER_ELEMENTS - firstBufferSkip));
                 xSemaphoreGive(receiveBufferMutex[serverIdx][0]);
             }
             else
@@ -183,6 +191,8 @@ void calculatePowerFromArray(bool reconstructionCall)
         }
 
         // Sada imam podatke poredane tako da mogu pronaci max 
+        int maxPowerPeriod[NUMBER_OF_SERVERS];
+        float maxPowerValue[NUMBER_OF_SERVERS] = {-__FLT32_MAX__};
         int alertPeriod = (SEND_BUFFER_ELEMENTS - firstBufferSkip) / PERIOD_ELEMENTS;
         // Pronaci max struju i max napon u periodu. 
         // Pronaci razliku u njihovim indeksima i tako naci deltu
@@ -205,12 +215,12 @@ void calculatePowerFromArray(bool reconstructionCall)
                 {
                     // In order to go to the end of the period, we need to put >= in calculating max indices. Just to be sure in our calculation.
                     // I can't use abs values since I don't know how I'm cutting values.
-                    if (combinedVoltageBuffer[serverIdx][i] >= maxVoltage)
+                    if ((int16_t)abs(combinedVoltageBuffer[serverIdx][i]) >= maxVoltage)
                     {
                         maxVoltage = (int16_t)abs(combinedVoltageBuffer[serverIdx][i]);
                         maxVoltageIdx = i;
                     }
-                    if (combinedCurrentBuffer[serverIdx][i] >= maxCurrent)
+                    if ((int16_t)abs(combinedCurrentBuffer[serverIdx][i]) >= maxCurrent)
                     {
                         maxCurrent = (int16_t)abs(combinedCurrentBuffer[serverIdx][i]);
                         maxCurrentIdx = i;
@@ -249,24 +259,33 @@ void calculatePowerFromArray(bool reconstructionCall)
                     int maxCurrentIdx = periodCounter;
                     for (int i = 1; i < PERIOD_ELEMENTS; i++)
                     {
-                        if (combinedVoltageBuffer[serverIdx][periodCounter + i] > maxVoltage)
+                        if ((int16_t)abs(combinedVoltageBuffer[serverIdx][periodCounter + i]) > maxVoltage)
                         {
                             maxVoltage = (int16_t)abs(combinedVoltageBuffer[serverIdx][periodCounter + i]);
                             maxVoltageIdx = periodCounter + i;
                         }
-                        if (combinedCurrentBuffer[serverIdx][periodCounter + i] > maxCurrent)
+                        if ((int16_t)abs(combinedCurrentBuffer[serverIdx][periodCounter + i]) > maxCurrent)
                         {
                             maxCurrent = (int16_t)abs(combinedCurrentBuffer[serverIdx][periodCounter + i]);
                             maxCurrentIdx = periodCounter + i;
                         }
                     }
-                    Serial.printf("[Calculate Power - Server %d] Max current: %d. Max voltage: %d\n", serverIdx, maxCurrent, maxVoltage);
+                    Serial.printf("[Calculate Power - Server %d] Period: %d - Max current: %d. Max voltage: %d\n", serverIdx, periodCounter/PERIOD_ELEMENTS + 1, maxCurrent, maxVoltage);
                     // Kada se racuna Fi, posmatra se napon, ako je fi pozitivan onda napon prednjaci, ako je negativan napon kasni
                     // kosinus fi racunamo preko lookup tabele za vrijednosti ciji je ulaz delta t pomjeren
                     // ako je vrijednost negativna, napon se dogodio prije. Ako je vrijednost pozitivna napon kasni.
                     float power = (maxVoltage * maxCurrent)/2.f * COS_PHI_TABLE[maxVoltageIdx - maxCurrentIdx + PERIOD_ELEMENTS - 1];
-                    Serial.printf("[Calculate Power - Server %d] Power for period: %d/%d is: %.5f\n", serverIdx, periodCounter/PERIOD_ELEMENTS + 1, combinedElements/PERIOD_ELEMENTS, power);
+                    if (power > maxPowerValue[serverIdx])
+                    {
+                        maxPowerValue[serverIdx] = power;
+                        maxPowerPeriod[serverIdx] = periodCounter;
+                    }
+                    // Serial.printf("[Calculate Power - Server %d] Power for period: %d/%d is: %.5f\n", serverIdx, periodCounter/PERIOD_ELEMENTS + 1, combinedElements/PERIOD_ELEMENTS, power);
                 }
+            }
+            for (int serverIdx = 0; serverIdx < NUMBER_OF_SERVERS; serverIdx++)
+            {
+                Serial.printf("[Calculate Power - Server %d] Max Power %.5f in period: %d/%d\n", serverIdx, maxPowerValue[serverIdx], maxPowerPeriod[serverIdx]/PERIOD_ELEMENTS + 1, combinedElements/PERIOD_ELEMENTS);
             }
         }
         xSemaphoreGive(powerCalculationMutex);
@@ -712,6 +731,7 @@ void setup() {
     esp_timer_create(&timerArgs, &reconstructionTimer);
 
     printTaskPriorities();
+    calculateCombinedDataValues();
 
     // poredaj booleane
     readyForAlerts = false;
